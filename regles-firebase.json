@@ -2,7 +2,7 @@
   "rules": {
     "tournoi": {
       ".read": true,
-      ".write": "auth != null && auth.token.email_verified === true && auth.token.email === 'vgras616@gmail.com'"
+      ".write": "auth != null && auth.token.email_verified === true && auth.token.email === 'TON_ADRESSE@gmail.com'"
     }
   }
 }
