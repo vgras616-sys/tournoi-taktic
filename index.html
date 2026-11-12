@@ -45,8 +45,11 @@ window.FIREBASE_CONFIG = {
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.45}
-header{background:var(--felt);color:var(--felt-ink);padding:14px 16px 12px}
-header .row{display:flex;align-items:center;justify-content:space-between;gap:12px;max-width:640px;margin:0 auto}
+header{background:var(--felt);color:var(--felt-ink);padding:10px 16px 0;overflow:hidden}
+header .brand{display:flex;align-items:flex-end;gap:10px;min-width:0}
+header .brand img{height:84px;width:auto;display:block;flex:none;filter:drop-shadow(0 2px 4px rgba(0,0,0,.25))}
+header .brand .txt{padding-bottom:12px;min-width:0}
+header .row{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;max-width:640px;margin:0 auto}
 header h1{font-family:var(--display);font-weight:700;font-size:26px;letter-spacing:.02em;margin:0;text-wrap:balance;text-transform:uppercase}
 header .sub{font-size:13px;opacity:.85}
 .live{display:inline-flex;align-items:center;gap:6px;font-size:12px;background:rgba(255,255,255,.15);padding:4px 8px;border-radius:99px;white-space:nowrap}
@@ -121,11 +124,14 @@ tr.cut td{border-bottom:2px dashed var(--brass)}
 <body>
 <header>
   <div class="row">
-    <div>
-      <h1 id="title">Tournoi</h1>
-      <div class="sub" id="subtitle">Chargement…</div>
+    <div class="brand">
+      <img src="tete-chat.png" alt="" width="74" height="84">
+      <div class="txt">
+        <h1 id="title">Tournoi</h1>
+        <div class="sub" id="subtitle">Chargement…</div>
+      </div>
     </div>
-    <span class="live off" id="live"><i></i><span>Connexion…</span></span>
+    <span class="live off" id="live" style="margin-bottom:14px"><i></i><span>Connexion…</span></span>
   </div>
 </header>
 <main id="app">
