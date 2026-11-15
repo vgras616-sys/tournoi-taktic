@@ -354,7 +354,7 @@ function render(){
   if(S.error) h += `<div class="banner err" role="alert">${esc(S.error)}</div>`;
   if(S.tab==="admin") h += viewAdmin();
   else if(S.tab==="regles") h += viewRules();
-  else if(!st) h += `<img class="logo" src="logo.jpg" alt="Tournoi de Tak Tik à Montreuil-le-Gast" width="340" height="340"><div class="card"><h2>Le tournoi n'a pas commencé</h2><p class="muted">${S.admin ? "Va dans l'onglet Admin pour saisir les participants et lancer la première ronde." : "L'organisateur prépare les tables. Cette page se met à jour toute seule dès qu'il lance la première ronde."}</p></div>`;
+  else if(!st) h += `<div class="card"><h2>Le tournoi n'a pas commencé</h2><p class="muted">${S.admin ? "Va dans l'onglet Admin pour saisir les participants et lancer la première ronde." : "L'organisateur prépare les tables. Cette page se met à jour toute seule dès qu'il lance la première ronde."}</p></div>`;
   else if(S.tab==="match") h += viewMatch();
   else if(S.tab==="classement") h += viewStandings();
   else h += viewBracket();
@@ -417,7 +417,7 @@ function viewRules(){
   const st=S.state, s=st?st.settings:{swissRounds:4,finalSize:4,ptsWin:3,ptsLoss:0,smallFinal:true};
   const nTeams = st?st.players.length:null;
   const odd = nTeams ? nTeams%2===1 : true;
-  return `<img class="logo" src="logo.jpg" alt="Tournoi de Tak Tik à Montreuil-le-Gast" width="340" height="340"><div class="card rules"><h2>Le tournoi</h2>
+  return `<div class="card rules"><h2>Le tournoi</h2>
     <h3>Format</h3>
     <ul>
       <li>On joue en <b>équipes de 2</b>. Chaque match oppose 2 équipes autour d'un plateau (2 contre 2, partenaires face à face).</li>
