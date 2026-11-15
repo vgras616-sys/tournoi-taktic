@@ -58,7 +58,7 @@ header .sub{font-size:13px;opacity:.85}
 main{max-width:640px;margin:0 auto;padding:16px 16px 96px;display:flex;flex-direction:column;gap:16px}
 nav.tabs{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom)}
 nav.tabs .in{display:flex;width:100%;max-width:640px}
-nav.tabs button{flex:1;background:none;border:0;padding:10px 4px 12px;font:600 15px var(--display);letter-spacing:.04em;text-transform:uppercase;color:var(--muted);cursor:pointer;border-top:3px solid transparent}
+nav.tabs button{flex:1;background:none;border:0;padding:10px 2px 12px;font:600 14px var(--display);letter-spacing:.04em;text-transform:uppercase;color:var(--muted);cursor:pointer;border-top:3px solid transparent}
 nav.tabs button[aria-current="true"]{color:var(--felt);border-top-color:var(--felt)}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px}
 .card h2{font-family:var(--display);font-size:20px;text-transform:uppercase;letter-spacing:.04em;margin:0 0 10px}
@@ -118,6 +118,12 @@ tr.cut td{border-bottom:2px dashed var(--brass)}
 .pill{display:inline-block;font-size:12px;padding:2px 8px;border-radius:99px;background:var(--soft);color:var(--muted);font-weight:700}
 .pill.ok{background:var(--win);color:#fff}
 .err{color:var(--lose);font-size:14px}
+.rules h3{font:700 17px var(--display);text-transform:uppercase;letter-spacing:.04em;margin:16px 0 6px;color:var(--felt)}
+.rules h3:first-of-type{margin-top:4px}
+.rules p,.rules li{max-width:65ch}
+.rules ul{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px}
+.cards{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;align-items:baseline}
+.cards b{font:700 18px var(--display);background:var(--soft);border-radius:6px;padding:2px 8px;text-align:center;min-width:44px;font-variant-numeric:tabular-nums}
 @media (prefers-reduced-motion: no-preference){ .pick button{transition:background .15s, border-color .15s} }
 </style>
 </head>
@@ -317,7 +323,7 @@ function mutate(fn){ const st = JSON.parse(JSON.stringify(S.state)); fn(st); S.s
 
 /* ---------- Rendu ---------- */
 function tabsFor(){
-  const t = [["match","Mon match"],["classement","Classement"],["finale","Phase finale"]];
+  const t = [["match","Mon match"],["classement","Classement"],["finale","Finale"],["regles","Règles"]];
   if(S.admin) t.push(["admin","Admin"]);
   return t;
 }
@@ -341,6 +347,7 @@ function render(){
   if(S.note) h += `<div class="banner">${esc(S.note)}</div>`;
   if(S.error) h += `<div class="banner err" role="alert">${esc(S.error)}</div>`;
   if(S.tab==="admin") h += viewAdmin();
+  else if(S.tab==="regles") h += viewRules();
   else if(!st) h += `<div class="card"><h2>Le tournoi n'a pas commencé</h2><p class="muted">${S.admin ? "Va dans l'onglet Admin pour saisir les participants et lancer la première ronde." : "L'organisateur prépare les tables. Cette page se met à jour toute seule dès qu'il lance la première ronde."}</p></div>`;
   else if(S.tab==="match") h += viewMatch();
   else if(S.tab==="classement") h += viewStandings();
@@ -399,6 +406,68 @@ function viewMatch(){
   }).join("");
   return hero + stats + `<div class="card"><h2>Historique</h2>${hist || '<p class="muted">Aucun match pour l\'instant.</p>'}</div>` +
     `<div class="small muted" style="text-align:center">Tu es <b>${esc(name(S.me))}</b> · <button class="btn" style="padding:4px 10px;font-size:14px" data-act="changeme">Changer</button></div>`;
+}
+function viewRules(){
+  const st=S.state, s=st?st.settings:{swissRounds:4,finalSize:4,ptsWin:3,ptsLoss:0,smallFinal:true};
+  const nTeams = st?st.players.length:null;
+  const odd = nTeams ? nTeams%2===1 : true;
+  return `<div class="card rules"><h2>Le tournoi</h2>
+    <h3>Format</h3>
+    <ul>
+      <li>On joue en <b>équipes de 2</b>. Chaque match oppose 2 équipes autour d'un plateau (2 contre 2, partenaires face à face).</li>
+      <li>Ta table et ton adversaire s'affichent dans l'onglet <b>Mon match</b>. La page se met à jour toute seule.</li>
+      <li>À la fin d'une partie, l'équipe gagnante prévient l'organisateur, qui enregistre le résultat.</li>
+    </ul>
+    <h3>Qualifications : ${s.swissRounds} rondes</h3>
+    <ul>
+      <li>À chaque ronde, tu affrontes une équipe qui a à peu près autant de points que toi. Tu ne rejoues jamais deux fois contre la même équipe.</li>
+      <li>Victoire : <b>${s.ptsWin} points</b>. Défaite : <b>${s.ptsLoss} point</b>.</li>
+      ${odd?`<li>Avec un nombre impair d'équipes, une équipe est <b>exempte</b> à chaque ronde (jamais deux fois la même). L'exempt ne rapporte aucun point : l'équipe joue son match manquant lors de la <b>ronde de rattrapage</b>. Au final, tout le monde a joué le même nombre de matchs.</li>`:""}
+      <li>À égalité de points, on départage par la somme des points des adversaires rencontrés (colonne « Dép. ») : battre des équipes fortes compte plus.</li>
+    </ul>
+    <h3>Phase finale</h3>
+    <ul>
+      <li>Les <b>${s.finalSize} premières équipes</b> du classement passent en élimination directe : 1<sup>re</sup> contre ${s.finalSize}<sup>e</sup>, 2<sup>e</sup> contre ${s.finalSize-1}<sup>e</sup>…</li>
+      <li>Les gagnants avancent jusqu'à la <b>finale</b>.${s.smallFinal?" Les perdants des demi-finales jouent la <b>petite finale</b> pour la 3<sup>e</sup> place.":""}</li>
+    </ul>
+  </div>
+  <div class="card rules"><h2>Le jeu : Tac Tik</h2>
+    <h3>But</h3>
+    <p>Être la première équipe à rentrer ses <b>8 pions</b> (4 par joueur) dans sa maison. Les partenaires sont assis face à face.</p>
+    <h3>Déroulement</h3>
+    <ul>
+      <li>Chaque joueur reçoit <b>4 cartes</b>. Avant de jouer, chacun donne <b>une carte face cachée à son partenaire</b>.</li>
+      <li>À ton tour, tu joues une carte et tu l'utilises <b>en entier</b>. Si tu peux jouer, tu dois jouer, même si ça ne t'arrange pas.</li>
+      <li>Si aucune carte n'est jouable, tu en défausses une et tu passes.</li>
+      <li>Quand toutes les cartes sont jouées, on redistribue.</li>
+    </ul>
+    <h3>Les cartes</h3>
+    <div class="cards">
+      <b>1 · 10</b><span>Sortir un pion de la réserve, ou avancer de 1 / 10.</span>
+      <b>2…12</b><span>Avancer d'autant de cases (sens des aiguilles d'une montre).</span>
+      <b>−4</b><span>Reculer de 4 cases. Pratique pour se placer juste avant sa maison.</span>
+      <b>7</b><span>Avancer de 7 au total, réparti comme tu veux entre tes pions. Mange tous les pions sur son passage.</span>
+      <b>⇄</b><span>Permuter : échanger un de tes pions avec un autre pion du parcours (adverse ou partenaire).</span>
+    </div>
+    <h3>Manger, bloquer</h3>
+    <ul>
+      <li>Un pion qui termine son déplacement <b>pile sur un autre pion</b> le mange : le pion mangé retourne dans sa réserve.</li>
+      <li>Un pion qui vient de sortir reste sur sa case de départ : c'est un <b>pieu</b>. On ne peut ni le manger, ni le dépasser, ni le permuter, même le partenaire. Dès qu'il bouge, il redevient un pion normal.</li>
+    </ul>
+    <h3>Rentrer à la maison</h3>
+    <ul>
+      <li>On entre dans sa maison en passant par sa case de départ, avec une carte qui fait avancer (pas avec le −4).</li>
+      <li>Dans la maison, un pion est à l'abri : il ne peut plus être mangé ni permuté. Avance-le au fond pour laisser la place aux suivants.</li>
+      <li>Quand tous tes pions sont rentrés, tu continues à jouer tes cartes <b>pour ton partenaire</b>. L'équipe qui rentre ses 8 pions gagne.</li>
+    </ul>
+  </div>
+  <div class="card rules"><h2>Bon esprit</h2>
+    <ul>
+      <li>Les règles du Tac Tik changent un peu d'une boîte à l'autre. On joue tous avec la même règle, annoncée avant le début.</li>
+      <li>En cas de doute ou de désaccord, <b>l'organisateur tranche</b>.</li>
+      <li>On joue vite : les autres tables attendent la fin de la ronde.</li>
+    </ul>
+  </div>`;
 }
 function podium(){
   const b=S.state.bracket; const f=b.rounds[b.rounds.length-1][0];
