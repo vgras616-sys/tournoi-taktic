@@ -326,6 +326,19 @@ function save(){
   });
 }
 function mutate(fn){ const st = JSON.parse(JSON.stringify(S.state)); fn(st); S.state = st; save(); }
+/* étape structurante (nouvelle ronde, phase finale…) : on garde une copie de l'état d'avant pour pouvoir revenir en arrière */
+const STEP_LABELS = {nextSwiss:"le lancement de la ronde", catchup:"le lancement de la ronde de rattrapage", startFinals:"le lancement de la phase finale", nextKo:"le passage au tour suivant", redoRound:"le nouveau tirage des appariements"};
+function mutateStep(kind, fn){
+  mutate(st=>{
+    const before = JSON.parse(JSON.stringify(st)); delete before.history;
+    fn(st);
+    st.history = (st.history||[]).concat([{kind, json:JSON.stringify(before)}]).slice(-20);
+  });
+}
+function undoStep(){
+  const hist = (S.state.history||[]).slice(); const last = hist.pop(); if(!last) return;
+  const prev = JSON.parse(last.json); prev.history = hist; S.state = prev; save();
+}
 
 /* ---------- Rendu ---------- */
 function tabsFor(){
@@ -550,6 +563,13 @@ function viewAdmin(){
   } else {
     h += podium();
   }
+  const hist = st.history||[];
+  if(hist.length){
+    const lastStep = hist[hist.length-1];
+    h += `<div class="card"><h2>Corriger une erreur</h2>
+      <p class="small muted">Dans la ronde en cours, touche simplement l'autre équipe pour changer le gagnant. Si tu as déjà lancé l'étape suivante, reviens en arrière : ça annule ${STEP_LABELS[lastStep.kind]||"la dernière étape"} et rouvre la saisie des résultats d'avant. Tu peux revenir en arrière plusieurs fois (${hist.length} étape${hist.length>1?"s":""} possible${hist.length>1?"s":""}).</p>
+      <div class="actions"><button class="btn" data-act="undo">${S.confirmUndo?"Confirmer le retour en arrière":"↩ Revenir à l'étape précédente"}</button>${S.confirmUndo?'<button class="btn" data-act="cancelUndo">Annuler</button>':""}</div></div>`;
+  }
   h += `<div class="card"><h2>Réglages</h2><p class="small muted">${st.players.length} participants · ${st.settings.tables||"autant de"} tables · victoire ${st.settings.ptsWin} / défaite ${st.settings.ptsLoss} pts · exempt rattrapé · top ${st.settings.finalSize} en phase finale${st.settings.smallFinal?" · petite finale":""}.</p>
     <div class="actions"><button class="btn danger" data-act="reset">${S.confirmReset?"Confirmer : tout effacer":"Réinitialiser le tournoi"}</button>${S.confirmReset?'<button class="btn" data-act="cancelReset">Annuler</button>':""}</div></div>`;
   return h;
@@ -586,7 +606,7 @@ function viewSetup(){
 /* ---------- Événements ---------- */
 document.addEventListener("click", (e)=>{
   const t = e.target.closest("[data-tab],[data-act]"); if(!t) return;
-  if(t.dataset.tab){ S.tab=t.dataset.tab; S.confirmReset=false; render(); window.scrollTo(0,0); return; }
+  if(t.dataset.tab){ S.tab=t.dataset.tab; S.confirmReset=false; S.confirmUndo=false; render(); window.scrollTo(0,0); return; }
   const a = t.dataset.act;
   if(a==="changeme"){ S.me=""; try{localStorage.removeItem(LS_ME);}catch(_){} render(); }
   if(a==="login") login();
@@ -601,13 +621,15 @@ document.addEventListener("click", (e)=>{
       x.winner = x.winner===pid ? null : pid;
     });
   }
-  if(a==="nextSwiss") mutate(st=>{ st.rounds.push(pairSwiss(st)); const q=qualifRounds(st); if(q>st.settings.swissRounds) st.settings.swissRounds=q; });
-  if(a==="catchup") mutate(st=>{ st.rounds.push(pairCatchup(st)); });
-  if(a==="redoRound") mutate(st=>{ const c=st.rounds.pop(); st.rounds.push(c.catchup?pairCatchup(st):pairSwiss(st)); });
-  if(a==="startFinals") mutate(st=>startFinals(st));
-  if(a==="nextKo") mutate(st=>nextKo(st));
+  if(a==="nextSwiss") mutateStep("nextSwiss", st=>{ st.rounds.push(pairSwiss(st)); const q=qualifRounds(st); if(q>st.settings.swissRounds) st.settings.swissRounds=q; });
+  if(a==="catchup") mutateStep("catchup", st=>{ st.rounds.push(pairCatchup(st)); });
+  if(a==="redoRound") mutateStep("redoRound", st=>{ const c=st.rounds.pop(); st.rounds.push(c.catchup?pairCatchup(st):pairSwiss(st)); });
+  if(a==="startFinals") mutateStep("startFinals", st=>startFinals(st));
+  if(a==="nextKo") mutateStep("nextKo", st=>nextKo(st));
   if(a==="reset"){ if(!S.confirmReset){ S.confirmReset=true; render(); } else { S.confirmReset=false; S.state=null; S.draft=null; save(); } }
   if(a==="cancelReset"){ S.confirmReset=false; render(); }
+  if(a==="undo"){ if(!S.confirmUndo){ S.confirmUndo=true; render(); } else { S.confirmUndo=false; undoStep(); } }
+  if(a==="cancelUndo"){ S.confirmUndo=false; render(); }
 });
 document.addEventListener("change",(e)=>{
   if(e.target.dataset.act==="who"){ S.me=e.target.value; try{localStorage.setItem(LS_ME,S.me);}catch(_){} render(); }
