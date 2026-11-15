@@ -172,21 +172,21 @@ function name(id){ if(!id) return "Exempt"; const p = S.state && S.state.players
 
 function standings(st){
   const m = {};
-  st.players.forEach(p=>m[p.id]={id:p.id,name:p.name,pts:0,w:0,l:0,byes:0,opps:[],played:0,diff:0});
+  st.players.forEach(p=>m[p.id]={id:p.id,name:p.name,pts:0,w:0,l:0,byes:0,opps:[],played:0,pen:0});
   const set = st.settings;
   st.rounds.forEach(r=>r.matches.forEach(x=>{
     if(!x.b){ if(m[x.a]) m[x.a].byes++; return; }
     if(!x.winner) return;
     const W = m[x.winner], L = m[x.winner===x.a?x.b:x.a];
     const gap = Math.max(0, Number(x.gap)||0);
-    if(W){ W.pts+=set.ptsWin; W.w++; W.played++; W.diff+=gap; }
-    if(L){ L.pts+=set.ptsLoss; L.l++; L.played++; L.diff-=gap; }
+    if(W){ W.pts+=set.ptsWin; W.w++; W.played++; }
+    if(L){ L.pts+=set.ptsLoss; L.l++; L.played++; L.pen+=gap; }
     if(m[x.a]) m[x.a].opps.push(x.b);
     if(m[x.b]) m[x.b].opps.push(x.a);
   }));
   const arr = Object.values(m);
   arr.forEach(p=>p.bu = p.opps.reduce((s,o)=>s+(m[o]?m[o].pts:0),0));
-  arr.sort((a,b)=> b.pts-a.pts || b.diff-a.diff || b.bu-a.bu || b.w-a.w || a.name.localeCompare(b.name,"fr"));
+  arr.sort((a,b)=> b.pts-a.pts || a.pen-b.pen || b.bu-a.bu || b.w-a.w || a.name.localeCompare(b.name,"fr"));
   return arr;
 }
 function havePlayed(st,a,b){ return st.rounds.some(r=>r.matches.some(x=>(x.a===a&&x.b===b)||(x.a===b&&x.b===a))); }
@@ -426,7 +426,7 @@ function viewMatch(){
   const hist = all.slice().reverse().map(x=>{
     const opp = x.a===S.me?x.b:x.a;
     const r = !x.b ? "E" : !x.winner ? "" : x.winner===S.me ? "V" : "D";
-    return `<div class="hist"><div class="res ${r||"E"}">${r||"…"}</div><div style="flex:1"><b>${x.b?"contre "+esc(name(opp)):"Exempt"}</b><div class="small muted">${esc(x.label)}${x.table?" · "+esc(tableText(x)):""}</div></div>${x.winner&&x.b&&x.gap!=null&&x.gap!==""?`<b style="font-variant-numeric:tabular-nums;color:${x.winner===S.me?"var(--win)":"var(--lose)"}">${x.winner===S.me?"+":"−"}${esc(x.gap)}</b>`:""}</div>`;
+    return `<div class="hist"><div class="res ${r||"E"}">${r||"…"}</div><div style="flex:1"><b>${x.b?"contre "+esc(name(opp)):"Exempt"}</b><div class="small muted">${esc(x.label)}${x.table?" · "+esc(tableText(x)):""}</div></div>${x.winner&&x.b&&x.winner!==S.me&&x.gap!=null&&x.gap!==""?`<span class="small" style="font-variant-numeric:tabular-nums;color:var(--lose);text-align:right"><b>${esc(x.gap)}</b><br>pts de défaite</span>`:""}</div>`;
   }).join("");
   return hero + stats + `<div class="card"><h2>Historique</h2>${hist || '<p class="muted">Aucun match pour l\'instant.</p>'}</div>` +
     `<div class="small muted" style="text-align:center">Tu es <b>${esc(name(S.me))}</b> · <button class="btn" style="padding:4px 10px;font-size:14px" data-act="changeme">Changer</button></div>`;
@@ -447,8 +447,8 @@ function viewRules(){
       <li>À chaque ronde, tu affrontes une équipe qui a à peu près autant de points que toi. Tu ne rejoues jamais deux fois contre la même équipe.</li>
       <li>Victoire : <b>${s.ptsWin} points</b>. Défaite : <b>${s.ptsLoss} point</b>.</li>
       ${odd?`<li>Avec un nombre impair d'équipes, une équipe est <b>exempte</b> à chaque ronde (jamais deux fois la même). L'exempt ne rapporte aucun point : l'équipe joue son match manquant lors de la <b>ronde de rattrapage</b>. Au final, tout le monde a joué le même nombre de matchs.</li>`:""}
-      <li><b>Écart</b> : quand une équipe rentre ses 8 pions, on compte le nombre de cases qu'il reste à parcourir à <b>tous les pions de l'équipe perdante</b> jusqu'au fond de leur maison. Un pion encore dans la réserve compte pour un tour complet du plateau. L'équipe gagnante marque <b>+</b> ce nombre, l'équipe perdante <b>−</b> ce nombre.</li>
-      <li>À égalité de points, on départage d'abord à l'<b>écart</b> cumulé sur tous les matchs, puis par la somme des points des adversaires rencontrés (colonne « Dép. »).</li>
+      <li><b>Points de défaite</b> : quand une équipe rentre ses 8 pions, on compte le nombre de cases qu'il reste à parcourir à <b>tous les pions de l'équipe perdante</b> jusqu'au fond de leur maison. Un pion encore dans la réserve compte pour un <b>tour complet du plateau plus les cases de la maison</b>. Ce total devient les points de défaite de l'équipe perdante. L'équipe gagnante n'en prend aucun.</li>
+      <li>À égalité de points, l'équipe qui a <b>le moins de points de défaite</b> cumulés passe devant (colonne « Pén. »). Si l'égalité persiste, on regarde la somme des points des adversaires rencontrés (colonne « Dép. »).</li>
     </ul>
     <h3>Phase finale</h3>
     <ul>
@@ -509,10 +509,10 @@ function podium(){
 function viewStandings(){
   const st=S.state, sd=standings(st);
   const cut = Math.min(st.settings.finalSize, sd.length);
-  const rows = sd.map((p,i)=>`<tr class="${p.id===S.me?"me":""} ${i===cut-1&&st.phase==="swiss"?"cut":""}"><td class="rank">${i+1}</td><td>${esc(p.name)}${p.byes?' <span class="pill">exempt</span>':""}</td><td class="num"><b>${p.pts}</b></td><td class="num">${p.w}–${p.l}</td><td class="num">${p.diff>0?"+":""}${p.diff}</td><td class="num">${p.bu}</td></tr>`).join("");
+  const rows = sd.map((p,i)=>`<tr class="${p.id===S.me?"me":""} ${i===cut-1&&st.phase==="swiss"?"cut":""}"><td class="rank">${i+1}</td><td>${esc(p.name)}${p.byes?' <span class="pill">exempt</span>':""}</td><td class="num"><b>${p.pts}</b></td><td class="num">${p.w}–${p.l}</td><td class="num">${p.pen}</td><td class="num">${p.bu}</td></tr>`).join("");
   return `<div class="card"><h2>Classement des rondes</h2>
-    <div class="scroll"><table><thead><tr><th>#</th><th>Joueur</th><th class="num">Pts</th><th class="num">V–D</th><th class="num" title="Cases gagnées moins cases perdues">Écart</th><th class="num" title="Somme des points de tes adversaires">Dép.</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <p class="small muted">Victoire ${st.settings.ptsWin} pts · défaite ${st.settings.ptsLoss} pt. Tout le monde joue le même nombre de matchs : l'exempt ne rapporte rien et se rattrape dans une ronde dédiée. À égalité de points, on départage à l'écart (cases restantes de l'adversaire quand tu gagnes, moins les tiennes quand tu perds), puis par la somme des points des adversaires (Dép.).${st.phase==="swiss"?" Les "+cut+" premiers (au-dessus des pointillés) vont en phase finale.":""}</p></div>`;
+    <div class="scroll"><table><thead><tr><th>#</th><th>Joueur</th><th class="num">Pts</th><th class="num">V–D</th><th class="num" title="Points de défaite : cases qu'il te restait quand tu as perdu">Pén.</th><th class="num" title="Somme des points de tes adversaires">Dép.</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="small muted">Victoire ${st.settings.ptsWin} pts · défaite ${st.settings.ptsLoss} pt. Tout le monde joue le même nombre de matchs : l'exempt ne rapporte rien et se rattrape dans une ronde dédiée. À égalité de points, celui qui a le moins de points de défaite passe devant (Pén. : les cases qu'il te restait quand tu as perdu), puis on départage par la somme des points des adversaires (Dép.).${st.phase==="swiss"?" Les "+cut+" premiers (au-dessus des pointillés) vont en phase finale.":""}</p></div>`;
 }
 function slot(x){
   const row=(id,seed)=>{ const cls = x.winner ? (x.winner===id?"w":"l") : ""; return `<div class="${cls} ${id===S.me?"me-s":""}"><span>${seed?'<span class="muted small">'+seed+'</span> ':""}${esc(name(id))}</span><span>${x.winner===id?"✓":""}</span></div>`; };
@@ -545,7 +545,8 @@ function viewAdmin(){
     const r = st.rounds[st.rounds.length-1];
     const real = r.matches.filter(x=>x.b);
     const done = real.filter(x=>x.winner).length;
-    const all = done===real.length;
+    const gapsMissing = real.filter(x=>x.winner&&(x.gap===undefined||x.gap===null||x.gap==="")).length;
+    const all = done===real.length && gapsMissing===0;
     const nq = qualifRounds(st);
     const last = nq >= st.settings.swissRounds;
     const short = all ? shortTeams(st) : [];
@@ -554,7 +555,7 @@ function viewAdmin(){
     const oddTeams = st.players.length % 2 === 1;
     h += `<div class="card"><h2>${r.catchup ? "Ronde de rattrapage" : "Ronde "+r.n+" / "+st.settings.swissRounds}</h2>
       ${r.catchup?'<p class="small muted">Les équipes qui ont été exemptes jouent leur match manquant. Après ça, tout le monde aura joué le même nombre de matchs.</p>':""}
-      <p class="small muted">Touche le nom du gagnant à chaque table (touche-le à nouveau pour annuler), puis saisis le nombre de cases qu'il restait à l'équipe perdante. ${done}/${real.length} résultats saisis${real.filter(x=>x.winner&&(x.gap===undefined||x.gap===null)).length?" · "+real.filter(x=>x.winner&&(x.gap===undefined||x.gap===null)).length+" écart(s) à saisir":""}.</p>
+      <p class="small muted">Touche le nom du gagnant à chaque table (touche-le à nouveau pour annuler), puis saisis le nombre de cases qu'il restait à l'équipe perdante. ${done}/${real.length} résultats saisis${gapsMissing?" · <b>"+gapsMissing+" décompte"+(gapsMissing>1?"s":"")+" de cases à saisir</b> avant de passer à la suite":""}.</p>
       <div class="list">${r.matches.map(x=> x.b ? matchPicker(x) : `<div class="match"><div class="head"><span>Exempt</span><span class="pill">jouera en rattrapage</span></div><div>${esc(name(x.a))}</div></div>`).join("")}</div>
       <div class="actions" style="margin-top:14px">
         ${!last?`<button class="btn primary" data-act="nextSwiss" ${all?"":"disabled"}>Lancer la ronde ${nq+1}</button>`:""}
@@ -589,7 +590,7 @@ function matchPicker(x){
   const missing = x.winner && (x.gap===undefined || x.gap===null || x.gap==="");
   const gapField = x.winner ? `<div class="gap"><label for="gap-${x.id}">Cases restantes de ${esc(name(loser))}</label>
       <input id="gap-${x.id}" type="number" inputmode="numeric" min="0" step="1" data-act="gap" data-m="${x.id}" value="${missing?"":esc(x.gap)}" placeholder="ex. 87"></div>` : "";
-  const pill = !x.winner ? '<span class="pill">En cours</span>' : missing ? '<span class="pill warn">Écart à saisir</span>' : `<span class="pill ok">Terminé · écart ${esc(x.gap)}</span>`;
+  const pill = !x.winner ? '<span class="pill">En cours</span>' : missing ? '<span class="pill warn">Cases à saisir</span>' : `<span class="pill ok">Terminé · ${esc(x.gap)} pts de défaite</span>`;
   return `<div class="match"><div class="head"><span>${esc(tableText(x)||"Match")}</span>${pill}</div><div class="pick">${b(x.a)}${b(x.b)}</div>${gapField}</div>`;
 }
 function viewSetup(){
@@ -632,8 +633,11 @@ document.addEventListener("click", (e)=>{
       const pools = [...st.rounds.flatMap(r=>r.matches)];
       if(st.bracket){ st.bracket.rounds.forEach(r=>pools.push(...r)); if(st.bracket.third) pools.push(st.bracket.third); }
       const x = pools.find(x=>x.id===mid); if(!x) return;
-      x.winner = x.winner===pid ? null : pid;
+      const nw = x.winner===pid ? null : pid;
+      if(nw!==x.winner) x.gap = null;
+      x.winner = nw;
     });
+    setTimeout(()=>{ const el=document.getElementById("gap-"+mid); if(el){ el.focus(); el.scrollIntoView({block:"center", behavior:"smooth"}); } }, 50);
   }
   if(a==="nextSwiss") mutateStep("nextSwiss", st=>{ st.rounds.push(pairSwiss(st)); const q=qualifRounds(st); if(q>st.settings.swissRounds) st.settings.swissRounds=q; });
   if(a==="catchup") mutateStep("catchup", st=>{ st.rounds.push(pairCatchup(st)); });
