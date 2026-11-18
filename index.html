@@ -247,7 +247,7 @@ function pairSwiss(st){
   return {n:st.rounds.length+1, matches};
 }
 
-function roundLabel(r){ return r.catchup ? "Rattrapage" : "Ronde "+r.n; }
+function roundLabel(r){ return r.catchup ? "Rattrapage" : r.pools ? "Poules · journée "+r.n : "Ronde "+r.n; }
 function qualifRounds(st){ return st.rounds.filter(r=>!r.catchup).length; }
 /* équipes qui ont joué moins de matchs que les autres (à cause de l'exempt) */
 function shortTeams(st){
@@ -275,7 +275,45 @@ function makeBracket(ids, offset){
   return {size, offset, rounds:[ms], third:null, done:false};
 }
 function brackets(st){ return [st.bracket, st.consol, ...(st.place||[])].filter(Boolean); }
-function isPlacement(st){ return st.settings.format==="placement"; }
+function isPlacement(st){ return st.settings.format==="placement" || st.settings.format==="pools"; }
+function isPools(st){ return st.settings.format==="pools"; }
+/* poules : chaque équipe affronte toutes les autres de sa poule (méthode du cercle) */
+function roundRobin(ids){
+  const a=ids.slice(); if(a.length%2) a.push(null);
+  const n=a.length, out=[];
+  for(let r=0;r<n-1;r++){
+    const pairs=[]; for(let i=0;i<n/2;i++) pairs.push([a[i],a[n-1-i]]);
+    out.push(pairs); a.splice(1,0,a.pop());
+  }
+  return out;
+}
+function buildPools(st, order, mode){
+  const ids = mode==="snake" ? order.slice() : shuffle(order.slice());
+  const A=[],B=[];
+  ids.forEach((id,i)=>{ const k=i%4; ((mode==="snake" ? (k===0||k===3) : i%2===0) ? A : B).push(id); });
+  st.pools={A,B};
+  const ra=roundRobin(A), rb=roundRobin(B), R=Math.max(ra.length, rb.length), sched=[];
+  for(let r=0;r<R;r++){
+    const ms=[];
+    [["A",ra[r]||[]],["B",rb[r]||[]]].forEach(([pool,pairs])=>pairs.forEach(([x,y])=>{
+      if(x===null||y===null){ const t=x===null?y:x; ms.push({id:uid(),a:t,b:null,winner:t,pool,table:null,wave:null}); }
+      else ms.push({id:uid(),a:x,b:y,winner:null,pool});
+    }));
+    const real=ms.filter(m=>m.b); assignTables(real, st.settings.tables);
+    sched.push({n:r+1, pools:true, matches:ms});
+  }
+  st.schedule=sched; st.settings.swissRounds=sched.length;
+}
+function poolStandings(st, pool){ const set=new Set(st.pools[pool]); return standings(st).filter(p=>set.has(p.id)); }
+/* matchs de classement entre poules : 1er A – 1er B (finale), 2e A – 2e B… */
+function startPoolPlacement(st){
+  const A=poolStandings(st,"A"), B=poolStandings(st,"B"), bs=[];
+  const k=Math.min(A.length,B.length);
+  for(let i=0;i<k;i++) bs.push(makeBracket([A[i].id, B[i].id], 2*i));
+  st.bracket=bs[0]; st.consol=null; st.place=bs.slice(1);
+  assignTables(bs.flatMap(b=>b.rounds[0]), st.settings.tables);
+  st.phase="finals";
+}
 /* ronde de classement : 1er contre 2e (finale), 3e contre 4e, 5e contre 6e… */
 function startPlacement(st){
   const sd = standings(st), bs=[];
@@ -355,7 +393,7 @@ function finalRanking(st){
 /* Tous les matchs d'un joueur, du plus ancien au plus récent */
 function matchesOf(st,id){
   const out=[];
-  st.rounds.forEach(r=>r.matches.forEach(x=>{ if(x.a===id||x.b===id) out.push({...x, label:roundLabel(r)}); }));
+  st.rounds.forEach(r=>r.matches.forEach(x=>{ if(x.a===id||x.b===id) out.push({...x, label:roundLabel(r)+(x.pool?" · Poule "+x.pool:"")}); }));
   brackets(st).forEach(b=>{
     b.rounds.forEach(r=>{ const lbl=bLabel(b,r.length,false); r.forEach(x=>{ if(x.a===id||x.b===id) out.push({...x,label:lbl,ko:true}); }); });
     const t=b.third; if(t && (t.a===id||t.b===id)) out.push({...t,label:bLabel(b,1,true),ko:true});
@@ -413,7 +451,7 @@ function render(){
   live.lastElementChild.textContent = S.mode==="live" ? "En direct" : S.mode==="local" ? "Mode local" : S.mode==="loading" ? "Connexion…" : "Hors ligne";
   if(st){
     const lastR = st.rounds[st.rounds.length-1];
-    const ph = st.phase==="swiss" ? (lastR&&lastR.catchup ? "Ronde de rattrapage" : "Ronde "+qualifRounds(st)+" / "+st.settings.swissRounds) : st.phase==="finals" ? (isPlacement(st) ? "Ronde de classement" : st.bracket.done ? "Matchs de classement" : koLabel(st.bracket.rounds[st.bracket.rounds.length-1].length)) : st.phase==="done" ? "Tournoi terminé" : "";
+    const ph = st.phase==="swiss" ? (lastR&&lastR.catchup ? "Ronde de rattrapage" : (isPools(st)?"Poules · journée ":"Ronde ")+qualifRounds(st)+" / "+st.settings.swissRounds) : st.phase==="finals" ? (isPools(st) ? "Matchs de classement" : isPlacement(st) ? "Ronde de classement" : st.bracket.done ? "Matchs de classement" : koLabel(st.bracket.rounds[st.bracket.rounds.length-1].length)) : st.phase==="done" ? "Tournoi terminé" : "";
     $("subtitle").textContent = st.players.length + " participants · " + ph;
   } else $("subtitle").textContent = S.mode==="loading" ? "Chargement…" : "Pas encore lancé";
 
@@ -450,7 +488,7 @@ function viewMatch(){
   if(!S.me || !st.players.some(p=>p.id===S.me)) return viewWho();
   const all = matchesOf(st,S.me);
   let current = null;
-  if(st.phase==="swiss"){ const r = st.rounds[st.rounds.length-1]; current = r && r.matches.find(x=>x.a===S.me||x.b===S.me); if(current) current={...current,label:roundLabel(r)}; }
+  if(st.phase==="swiss"){ const r = st.rounds[st.rounds.length-1]; current = r && r.matches.find(x=>x.a===S.me||x.b===S.me); if(current) current={...current,label:roundLabel(r)+(current.pool?" · Poule "+current.pool:"")}; }
   else if(st.phase==="finals"){
     const c = currentKo(st).find(c=>c.x.a===S.me||c.x.b===S.me);
     if(c) current = {...c.x, label:c.label};
@@ -471,9 +509,10 @@ function viewMatch(){
   } else if(st.phase==="finals"){
     hero = `<div class="card"><h2>Pas de match pour toi</h2><p class="muted">Pas de match en cours pour toi : attends le tour suivant ou suis les tableaux dans l'onglet Finale.</p></div>`;
   }
-  const sd = standings(st); const i = sd.findIndex(p=>p.id===S.me); const me = sd[i];
+  const myPool = isPools(st) && st.pools ? (st.pools.A.includes(S.me)?"A":"B") : null;
+  const sd = myPool ? poolStandings(st,myPool) : standings(st); const i = sd.findIndex(p=>p.id===S.me); const me = sd[i];
   const stats = me ? `<div class="card"><h2>Mon bilan</h2><div class="fields">
-     <div><div class="muted small">Classement</div><b style="font:700 28px var(--display)">${i+1}<sup>e</sup></b></div>
+     <div><div class="muted small">Classement${myPool?" poule "+myPool:""}</div><b style="font:700 28px var(--display)">${i+1}<sup>e</sup></b></div>
      <div><div class="muted small">Points</div><b style="font:700 28px var(--display)">${me.pts}</b></div>
      <div><div class="muted small">V – D</div><b style="font:700 28px var(--display)">${me.w} – ${me.l}</b></div></div></div>` : "";
   const hist = all.slice().reverse().map(x=>{
@@ -495,15 +534,20 @@ function viewRules(){
       <li>Ta table et ton adversaire s'affichent dans l'onglet <b>Mon match</b>. La page se met à jour toute seule.</li>
       <li>À la fin d'une partie, l'équipe gagnante prévient l'organisateur, qui enregistre le résultat.</li>
     </ul>
-    <h3>Qualifications : ${s.swissRounds} rondes</h3>
+    <h3>${s.format==="pools"?"Poules : "+s.swissRounds+" journées":"Qualifications : "+s.swissRounds+" rondes"}</h3>
     <ul>
-      <li>À chaque ronde, tu affrontes une équipe qui a à peu près autant de points que toi. Tu ne rejoues jamais deux fois contre la même équipe.</li>
+      ${s.format==="pools"?"<li>Chaque journée, tu affrontes une autre équipe de ta poule. À la fin des poules, tu as joué contre chacune d'elles une fois.</li>":`<li>À chaque ronde, tu affrontes une équipe qui a à peu près autant de points que toi. Tu ne rejoues jamais deux fois contre la même équipe.</li>`}
       <li>Victoire : <b>${s.ptsWin} points</b>. Défaite : <b>${s.ptsLoss} point</b>.</li>
       ${odd?`<li>Avec un nombre impair d'équipes, une équipe est <b>exempte</b> à chaque ronde (jamais deux fois la même). L'exempt ne rapporte aucun point : l'équipe joue son match manquant lors de la <b>ronde de rattrapage</b>. Au final, tout le monde a joué le même nombre de matchs.</li>`:""}
       <li><b>Points de défaite</b> : quand une équipe rentre ses 8 pions, on compte le nombre de cases qu'il reste à parcourir à <b>tous les pions de l'équipe perdante</b> jusqu'au fond de leur maison. Un pion encore dans la réserve compte pour un <b>tour complet du plateau plus les cases de la maison</b>. Ce total devient les points de défaite de l'équipe perdante. L'équipe gagnante n'en prend aucun.</li>
       <li>À égalité de points, l'équipe qui a <b>le moins de points de défaite</b> cumulés passe devant (colonne « Pén. »). Si l'égalité persiste, on regarde la somme des points des adversaires rencontrés (colonne « Dép. »).</li>
     </ul>
-    ${s.format==="placement" ? `<h3>Ronde de classement</h3>
+    ${s.format==="pools" ? `<h3>Poules puis matchs de classement</h3>
+    <ul>
+      <li>Les équipes sont réparties en <b>2 poules</b>. Dans chaque poule, chaque équipe affronte <b>toutes les autres</b> une fois.</li>
+      <li>Ensuite, chaque équipe joue contre l'équipe de l'autre poule qui a le même rang : <b>1<sup>er</sup> A contre 1<sup>er</sup> B</b> (finale), 2<sup>e</sup> contre 2<sup>e</sup> (3<sup>e</sup> place), 3<sup>e</sup> contre 3<sup>e</sup> (5<sup>e</sup> place), 4<sup>e</sup> contre 4<sup>e</sup> (7<sup>e</sup> place).</li>
+      <li>Le gagnant prend la meilleure des deux places. Tout le monde joue le même nombre de parties et repart avec un classement.</li>
+    </ul>` : s.format==="placement" ? `<h3>Ronde de classement</h3>
     <ul>
       <li>Après les rondes de qualif, chaque équipe joue <b>un dernier match contre sa voisine au classement</b> : 1<sup>re</sup> contre 2<sup>e</sup> (c'est la <b>finale</b>), 3<sup>e</sup> contre 4<sup>e</sup>, 5<sup>e</sup> contre 6<sup>e</sup>…</li>
       <li>Le gagnant de chaque match prend la meilleure des deux places, le perdant l'autre. Tout le monde repart avec un classement.</li>
@@ -564,8 +608,15 @@ function podium(){
     <div><b>2</b>${at(2)}</div><div class="p1"><b>1</b>${at(1)}</div><div><b>3</b>${at(3)}</div></div></div>
     <div class="card"><h2>Classement final</h2><table><tbody>${rows}</tbody></table></div>`;
 }
+function standingsTable(sd){
+  const rows = sd.map((p,i)=>`<tr class="${p.id===S.me?"me":""}"><td class="rank">${i+1}</td><td>${esc(p.name)}${p.byes?' <span class="pill">exempt</span>':""}</td><td class="num"><b>${p.pts}</b></td><td class="num">${p.w}–${p.l}</td><td class="num">${p.pen}</td></tr>`).join("");
+  return `<div class="scroll"><table><thead><tr><th>#</th><th>Équipe</th><th class="num">Pts</th><th class="num">V–D</th><th class="num" title="Points de défaite : cases qu'il te restait quand tu as perdu">Pén.</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
 function viewStandings(){
-  const st=S.state, sd=standings(st);
+  const st=S.state;
+  if(isPools(st)) return ["A","B"].map(k=>`<div class="card"><h2>Poule ${k}</h2>${standingsTable(poolStandings(st,k))}</div>`).join("") +
+    `<p class="small muted">Victoire ${st.settings.ptsWin} pts · défaite ${st.settings.ptsLoss} pt. Dans chaque poule, chaque équipe affronte toutes les autres. À égalité de points, celle qui a le moins de points de défaite (Pén. : les cases qu'il te restait quand tu as perdu) passe devant. Ensuite : 1er A contre 1er B (finale), 2e contre 2e, 3e contre 3e, 4e contre 4e.</p>`;
+  const sd=standings(st);
   const cut = Math.min(st.settings.finalSize, sd.length);
   const rows = sd.map((p,i)=>`<tr class="${p.id===S.me?"me":""} ${i===cut-1&&st.phase==="swiss"&&!isPlacement(st)?"cut":""}"><td class="rank">${i+1}</td><td>${esc(p.name)}${p.byes?' <span class="pill">exempt</span>':""}</td><td class="num"><b>${p.pts}</b></td><td class="num">${p.w}–${p.l}</td><td class="num">${p.pen}</td><td class="num">${p.bu}</td></tr>`).join("");
   return `<div class="card"><h2>Classement des rondes</h2>
@@ -589,9 +640,10 @@ function bracketCard(b, title){
 function viewBracket(){
   const st=S.state;
   if(isPlacement(st)){
+    if(!st.bracket && isPools(st)) return `<div class="card"><h2>Matchs de classement</h2><p class="muted">Après les poules, chaque équipe joue contre l'équipe de l'autre poule qui a le même rang : 1<sup>er</sup> A contre 1<sup>er</sup> B pour le titre, 2<sup>e</sup> contre 2<sup>e</sup> pour la 3<sup>e</sup> place, 3<sup>e</sup> contre 3<sup>e</sup> pour la 5<sup>e</sup>, 4<sup>e</sup> contre 4<sup>e</sup> pour la 7<sup>e</sup>.</p></div>`;
     if(!st.bracket) return `<div class="card"><h2>Ronde de classement</h2><p class="muted">Après la dernière ronde, chaque équipe joue un dernier match contre sa voisine au classement : 1<sup>er</sup> contre 2<sup>e</sup> pour le titre, 3<sup>e</sup> contre 4<sup>e</sup>, 5<sup>e</sup> contre 6<sup>e</sup>… Le gagnant prend la meilleure des deux places.</p></div>`;
     const items = brackets(st).map(b=>`<div><div class="small muted" style="margin:10px 0 6px"><b>${esc(bLabel(b,1,false))}</b>${b.rounds[0][0].table?" · Table "+b.rounds[0][0].table:""}</div>${slot(b.rounds[0][0])}</div>`).join("");
-    return (st.phase==="done"?podium():"") + `<div class="card"><h2>Ronde de classement</h2>${items}</div>`;
+    return (st.phase==="done"?podium():"") + `<div class="card"><h2>${isPools(st)?"Matchs de classement":"Ronde de classement"}</h2>${items}</div>`;
   }
   if(!st.bracket){
     const n = Math.min(st.settings.finalSize, st.players.length);
@@ -615,18 +667,18 @@ function viewAdmin(){
     const last = nq >= st.settings.swissRounds;
     const short = all ? shortTeams(st) : [];
     const hasCatch = st.rounds.some(x=>x.catchup);
-    const needCatch = last && all && short.length>0 && !r.catchup;
+    const needCatch = last && all && short.length>0 && !r.catchup && !isPools(st);
     const oddTeams = st.players.length % 2 === 1;
-    h += `<div class="card"><h2>${r.catchup ? "Ronde de rattrapage" : "Ronde "+r.n+" / "+st.settings.swissRounds}</h2>
+    h += `<div class="card"><h2>${r.catchup ? "Ronde de rattrapage" : (r.pools?"Poules · journée ":"Ronde ")+r.n+" / "+st.settings.swissRounds}</h2>
       ${r.catchup?'<p class="small muted">Les équipes qui ont été exemptes jouent leur match manquant. Après ça, tout le monde aura joué le même nombre de matchs.</p>':""}
       <p class="small muted">Touche le nom du gagnant à chaque table (touche-le à nouveau pour annuler), puis saisis le nombre de cases qu'il restait à l'équipe perdante. ${done}/${real.length} résultats saisis${gapsMissing?" · <b>"+gapsMissing+" décompte"+(gapsMissing>1?"s":"")+" de cases à saisir</b> avant de passer à la suite":""}.</p>
       <div class="list">${r.matches.map(x=> x.b ? matchPicker(x) : `<div class="match"><div class="head"><span>Exempt</span><span class="pill">jouera en rattrapage</span></div><div>${esc(name(x.a))}</div></div>`).join("")}</div>
       <div class="actions" style="margin-top:14px">
-        ${!last?`<button class="btn primary" data-act="nextSwiss" ${all?"":"disabled"}>Lancer la ronde ${nq+1}</button>`:""}
+        ${!last?`<button class="btn primary" data-act="nextSwiss" ${all?"":"disabled"}>${isPools(st)?"Lancer la journée "+(nq+1):"Lancer la ronde "+(nq+1)}</button>`:""}
         ${needCatch?`<button class="btn primary" data-act="catchup">Lancer la ronde de rattrapage (${short.length} équipes)</button>`:""}
-        ${last?`<button class="btn ${needCatch?"":"primary"}" data-act="startFinals" ${all&&!needCatch?"":"disabled"}>${isPlacement(st) ? "Lancer la ronde de classement" : "Lancer la phase finale (top "+Math.min(st.settings.finalSize, st.players.length)+")"}</button>`:""}
-        ${last&&!oddTeams&&!hasCatch?`<button class="btn" data-act="nextSwiss" ${all?"":"disabled"}>Ajouter une ronde</button>`:""}
-        <button class="btn" data-act="redoRound">Refaire les appariements de cette ronde</button>
+        ${last?`<button class="btn ${needCatch?"":"primary"}" data-act="startFinals" ${all&&!needCatch?"":"disabled"}>${isPools(st) ? "Lancer les matchs de classement" : isPlacement(st) ? "Lancer la ronde de classement" : "Lancer la phase finale (top "+Math.min(st.settings.finalSize, st.players.length)+")"}</button>`:""}
+        ${last&&!oddTeams&&!hasCatch&&!isPools(st)?`<button class="btn" data-act="nextSwiss" ${all?"":"disabled"}>Ajouter une ronde</button>`:""}
+        ${isPools(st)?"":`<button class="btn" data-act="redoRound">Refaire les appariements de cette ronde</button>`}
       </div></div>`;
   } else if(st.phase==="finals"){
     const all = koAllDone(st), cur = currentKo(st);
@@ -656,7 +708,7 @@ function matchPicker(x){
   const gapField = x.winner ? `<div class="gap"><label for="gap-${x.id}">Cases restantes de ${esc(name(loser))}</label>
       <input id="gap-${x.id}" type="number" inputmode="numeric" min="0" step="1" data-act="gap" data-m="${x.id}" value="${missing?"":esc(x.gap)}" placeholder="ex. 87"></div>` : "";
   const pill = !x.winner ? '<span class="pill">En cours</span>' : missing ? '<span class="pill warn">Cases à saisir</span>' : `<span class="pill ok">Terminé · ${esc(x.gap)} pts de défaite</span>`;
-  return `<div class="match"><div class="head"><span>${esc(tableText(x)||"Match")}</span>${pill}</div><div class="pick">${b(x.a)}${b(x.b)}</div>${gapField}</div>`;
+  return `<div class="match"><div class="head"><span>${x.pool?"Poule "+x.pool+" · ":""}${esc(tableText(x)||"Match")}</span>${pill}</div><div class="pick">${b(x.a)}${b(x.b)}</div>${gapField}</div>`;
 }
 function viewSetup(){
   const d = S.draft || (S.draft = { name:"Tournoi entre amis", players:"", rounds:"", finalSize:"4", tables:"", ptsWin:"3", ptsLoss:"0", smallFinal:true, consolante:true, format:"finals" });
@@ -671,22 +723,29 @@ function viewSetup(){
       <select id="f-format" data-f="format">
         <option value="finals" ${d.format!=="placement"?"selected":""}>Phase finale : demi-finales, finale + consolante</option>
         <option value="placement" ${d.format==="placement"?"selected":""}>Ronde de classement : 1er contre 2e, 3e contre 4e…</option>
+        <option value="pools" ${d.format==="pools"?"selected":""}>2 poules (tous contre tous) + matchs de classement</option>
       </select>
-      <div class="small muted">${d.format==="placement"
+      <div class="small muted">${d.format==="pools"
+        ? "Le plus équitable : dans chaque poule, chaque équipe affronte toutes les autres, puis 1er A contre 1er B (finale), 2e contre 2e… Avec 8 équipes : 2 poules de 4, 4 parties par équipe."+(n%2?" Attention : avec un nombre impair d'équipes, les poules sont inégales.":"")
+        : d.format==="placement"
         ? "Une seule partie de plus pour tout le monde : 1er contre 2e pour le titre, 3e contre 4e, etc. Avec 8 équipes et 2 rondes de qualif : 3 parties par équipe."+(n%2?" Attention : avec un nombre impair d'équipes, la dernière ne joue pas la ronde de classement (une partie de moins).":"")
         : "Le top joue des demi-finales puis la finale ; les suivants jouent la consolante en même temps. Avec 8 équipes et 3 rondes de qualif : 5 parties par équipe."}</div></div>
+    ${d.format==="pools"?`<div><label for="f-split">Répartition des poules</label><select id="f-split" data-f="split">
+        <option value="random" ${d.split!=="snake"?"selected":""}>Tirage au sort</option>
+        <option value="snake" ${d.split==="snake"?"selected":""}>Serpentin : liste triée du plus fort au plus faible</option></select>
+      <div class="small muted">${d.split==="snake"?"Mets les équipes dans l'ordre de niveau, de la plus forte à la plus faible : 1re et 4e en poule A, 2e et 3e en poule B, et ainsi de suite.":"Les poules sont tirées au hasard au lancement."}</div></div>`:""}
     <div class="fields">
-      <div><label for="f-rounds">Rondes de qualif</label><input id="f-rounds" data-f="rounds" type="number" min="1" max="15" placeholder="${sugg} conseillé" value="${esc(d.rounds)}"></div>
-      ${d.format==="placement"?"":`<div><label for="f-final">Phase finale</label><select id="f-final" data-f="finalSize">${[2,4,8,16].map(v=>`<option value="${v}" ${String(v)===d.finalSize?"selected":""}>Top ${v}</option>`).join("")}</select></div>`}
+      ${d.format==="pools"?"":`<div><label for="f-rounds">Rondes de qualif</label><input id="f-rounds" data-f="rounds" type="number" min="1" max="15" placeholder="${sugg} conseillé" value="${esc(d.rounds)}"></div>`}
+      ${d.format==="placement"||d.format==="pools"?"":`<div><label for="f-final">Phase finale</label><select id="f-final" data-f="finalSize">${[2,4,8,16].map(v=>`<option value="${v}" ${String(v)===d.finalSize?"selected":""}>Top ${v}</option>`).join("")}</select></div>`}
       <div><label for="f-tables">Tables dispo</label><input id="f-tables" data-f="tables" type="number" min="1" placeholder="illimité" value="${esc(d.tables)}"></div>
     </div>
     <div class="fields">
       <div><label for="f-w">Pts victoire</label><input id="f-w" data-f="ptsWin" type="number" value="${esc(d.ptsWin)}"></div>
       <div><label for="f-l">Pts défaite</label><input id="f-l" data-f="ptsLoss" type="number" value="${esc(d.ptsLoss)}"></div>
     </div>
-    ${d.format==="placement"?"":`<label class="check" for="f-small"><input id="f-small" type="checkbox" data-f="smallFinal" ${d.smallFinal?"checked":""}> Match pour la 3e place (petite finale)</label>
+    ${d.format==="placement"||d.format==="pools"?"":`<label class="check" for="f-small"><input id="f-small" type="checkbox" data-f="smallFinal" ${d.smallFinal?"checked":""}> Match pour la 3e place (petite finale)</label>
     <label class="check" for="f-consol"><input id="f-consol" type="checkbox" data-f="consolante" ${d.consolante!==false?"checked":""}> Consolante : les équipes non qualifiées jouent pour les places suivantes</label>`}
-    <p class="small muted">Déroulé : des rondes « à la suisse » où chacun affronte un adversaire au score proche, sans jamais rejouer contre le même. ${d.format==="placement"?"Puis une ronde de classement : 1er contre 2e pour le titre, 3e contre 4e, etc.":"Puis les meilleurs passent en élimination directe jusqu'à la finale."}</p>
+    <p class="small muted">Déroulé : des rondes « à la suisse » où chacun affronte un adversaire au score proche, sans jamais rejouer contre le même. ${d.format==="pools"?"Variante poules : chaque équipe affronte toutes celles de sa poule, puis matchs de classement entre poules.":d.format==="placement"?"Puis une ronde de classement : 1er contre 2e pour le titre, 3e contre 4e, etc.":"Puis les meilleurs passent en élimination directe jusqu'à la finale."}</p>
     ${S.setupErr?`<div class="err">${esc(S.setupErr)}</div>`:""}
     <button class="btn primary" type="submit">Lancer la ronde 1</button>
    </form></div>`;
@@ -713,10 +772,10 @@ document.addEventListener("click", (e)=>{
     });
     setTimeout(()=>{ const el=document.getElementById("gap-"+mid); if(el){ el.focus(); el.scrollIntoView({block:"center", behavior:"smooth"}); } }, 50);
   }
-  if(a==="nextSwiss") mutateStep("nextSwiss", st=>{ st.rounds.push(pairSwiss(st)); const q=qualifRounds(st); if(q>st.settings.swissRounds) st.settings.swissRounds=q; });
+  if(a==="nextSwiss") mutateStep("nextSwiss", st=>{ if(isPools(st)){ const nx=st.schedule[st.rounds.length]; if(nx) st.rounds.push(JSON.parse(JSON.stringify(nx))); return; } st.rounds.push(pairSwiss(st)); const q=qualifRounds(st); if(q>st.settings.swissRounds) st.settings.swissRounds=q; });
   if(a==="catchup") mutateStep("catchup", st=>{ st.rounds.push(pairCatchup(st)); });
   if(a==="redoRound") mutateStep("redoRound", st=>{ const c=st.rounds.pop(); st.rounds.push(c.catchup?pairCatchup(st):pairSwiss(st)); });
-  if(a==="startFinals") mutateStep("startFinals", st=> isPlacement(st) ? startPlacement(st) : startFinals(st));
+  if(a==="startFinals") mutateStep("startFinals", st=> isPools(st) ? startPoolPlacement(st) : isPlacement(st) ? startPlacement(st) : startFinals(st));
   if(a==="nextKo") mutateStep("nextKo", st=>nextKo(st));
   if(a==="reset"){ if(!S.confirmReset){ S.confirmReset=true; render(); } else { S.confirmReset=false; S.state=null; S.draft=null; save(); } }
   if(a==="cancelReset"){ S.confirmReset=false; render(); }
@@ -750,10 +809,11 @@ document.addEventListener("submit",(e)=>{
     name: d.name.trim() || "Tournoi",
     phase:"swiss",
     players: names.map(n=>({id:uid(),name:n})),
-    settings:{ swissRounds: (()=>{ let r=Math.max(1,num(d.rounds, Math.max(1, Math.ceil(Math.log2(names.length)) - (d.format==="placement"?1:0)))); if(names.length%2===1 && r%2===1) r++; return r; })(), finalSize: num(d.finalSize,4), tables: Math.max(0,num(d.tables,0)), ptsWin:num(d.ptsWin,3), ptsLoss:num(d.ptsLoss,0), ptsBye:0, smallFinal: !!d.smallFinal, consolante: d.consolante!==false, format: d.format==="placement"?"placement":"finals" },
+    settings:{ swissRounds: (()=>{ let r=Math.max(1,num(d.rounds, Math.max(1, Math.ceil(Math.log2(names.length)) - (d.format==="placement"?1:0)))); if(names.length%2===1 && r%2===1) r++; return r; })(), finalSize: num(d.finalSize,4), tables: Math.max(0,num(d.tables,0)), ptsWin:num(d.ptsWin,3), ptsLoss:num(d.ptsLoss,0), ptsBye:0, smallFinal: !!d.smallFinal, consolante: d.consolante!==false, format: ["placement","pools"].includes(d.format)?d.format:"finals" },
     rounds:[], bracket:null, consol:null, place:[]
   };
-  st.rounds.push(pairSwiss(st));
+  if(st.settings.format==="pools"){ buildPools(st, st.players.map(p=>p.id), d.split==="snake"?"snake":"random"); st.rounds.push(JSON.parse(JSON.stringify(st.schedule[0]))); }
+  else st.rounds.push(pairSwiss(st));
   S.state=st; S.tab="admin"; save();
 });
 
