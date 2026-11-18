@@ -268,44 +268,89 @@ function pairCatchup(st){
 function seedOrder(n){ let o=[1]; while(o.length<n){ const m=o.length*2+1; o=o.flatMap(s=>[s,m-s]); } return o; }
 function koLabel(nMatches){ return nMatches===1?"Finale":nMatches===2?"Demi-finales":nMatches===4?"Quarts de finale":nMatches===8?"Huitièmes de finale":nMatches+" matchs"; }
 
+/* Phase finale : tableau principal (offset 0) + consolante pour les suivants (offset = taille du principal) */
+function makeBracket(ids, offset){
+  const size=ids.length, o=seedOrder(size), ms=[];
+  for(let i=0;i<o.length;i+=2) ms.push({id:uid(),a:ids[o[i]-1],b:ids[o[i+1]-1],winner:null,seedA:o[i]+offset,seedB:o[i+1]+offset});
+  return {size, offset, rounds:[ms], third:null, done:false};
+}
+function brackets(st){ return [st.bracket, st.consol].filter(Boolean); }
+function hasThird(st,b){ return (b.offset||0)>0 ? true : !!st.settings.smallFinal; }
+function bLabel(b, nMatches, isThird){
+  const o=b.offset||0;
+  if(!o) return isThird ? "Petite finale" : koLabel(nMatches);
+  if(isThird) return "Match pour la "+(o+3)+"e place";
+  if(nMatches===1) return "Match pour la "+(o+1)+"e place";
+  return koLabel(nMatches)+" · places "+(o+1)+" à "+(o+b.size);
+}
+function allKoMatches(st){ const out=[]; brackets(st).forEach(b=>{ b.rounds.forEach(r=>out.push(...r)); if(b.third) out.push(b.third); }); return out; }
+/* matchs en cours de chaque tableau, avec leur libellé */
+function currentKo(st){
+  const out=[];
+  brackets(st).forEach(b=>{ if(b.done) return; const r=b.rounds[b.rounds.length-1];
+    r.forEach(x=>out.push({x, label:bLabel(b,r.length,false)}));
+    if(b.third && r.length===1) out.push({x:b.third, label:bLabel(b,1,true)}); });
+  return out;
+}
 function startFinals(st){
   const sd = standings(st);
   let size = st.settings.finalSize; while(size > sd.length) size/=2;
   size = Math.max(2, size);
-  const seeds = sd.slice(0,size).map(p=>p.id);
-  const o = seedOrder(size), ms=[];
-  for(let i=0;i<o.length;i+=2) ms.push({id:uid(),a:seeds[o[i]-1],b:seeds[o[i+1]-1],winner:null,seedA:o[i],seedB:o[i+1]});
-  st.bracket = { size, rounds:[assignTables(ms, st.settings.tables)], third:null };
+  st.bracket = makeBracket(sd.slice(0,size).map(p=>p.id), 0);
+  st.consol = null;
+  if(st.settings.consolante!==false){
+    let c=1; const rest=sd.length-size; while(c*2<=Math.min(size,rest)) c*=2;
+    if(c>=2) st.consol = makeBracket(sd.slice(size,size+c).map(p=>p.id), size);
+  }
+  assignTables(brackets(st).flatMap(b=>b.rounds[0]), st.settings.tables);
   st.phase = "finals";
 }
 function koAllDone(st){
-  const b = st.bracket; const last = b.rounds[b.rounds.length-1];
-  return last.every(x=>x.winner) && (!b.third || b.third.winner);
+  return brackets(st).every(b=>{ if(b.done) return true; const last=b.rounds[b.rounds.length-1];
+    return last.every(x=>x.winner) && (last.length!==1 || !b.third || b.third.winner); });
 }
 function nextKo(st){
-  const b = st.bracket; const last = b.rounds[b.rounds.length-1];
-  if(last.length===1){ st.phase="done"; return; }
-  const w = last.map(x=>x.winner);
-  const ms=[]; for(let i=0;i<w.length;i+=2) ms.push({id:uid(),a:w[i],b:w[i+1],winner:null});
-  if(last.length===2 && st.settings.smallFinal){
-    const losers = last.map(x=>x.winner===x.a?x.b:x.a);
-    b.third = {id:uid(),a:losers[0],b:losers[1],winner:null};
-    assignTables([...ms, b.third], st.settings.tables);
-  } else assignTables(ms, st.settings.tables);
-  b.rounds.push(ms);
+  const fresh=[];
+  brackets(st).forEach(b=>{
+    if(b.done) return;
+    const last=b.rounds[b.rounds.length-1];
+    if(last.length===1){ b.done=true; return; }
+    const w=last.map(x=>x.winner), ms=[];
+    for(let i=0;i<w.length;i+=2) ms.push({id:uid(),a:w[i],b:w[i+1],winner:null});
+    b.rounds.push(ms); fresh.push(...ms);
+    if(last.length===2 && hasThird(st,b)){
+      const losers=last.map(x=>x.winner===x.a?x.b:x.a);
+      b.third={id:uid(),a:losers[0],b:losers[1],winner:null}; fresh.push(b.third);
+    }
+  });
+  if(fresh.length) assignTables(fresh, st.settings.tables);
+  if(brackets(st).every(b=>b.done)) st.phase="done";
+}
+/* classement final : places issues des tableaux, puis le reste selon les rondes */
+function finalRanking(st){
+  const placed=[], seen=new Set();
+  brackets(st).forEach(b=>{
+    const o=b.offset||0, f=b.rounds[b.rounds.length-1][0];
+    if(b.rounds[b.rounds.length-1].length===1 && f.winner){
+      const lose=f.winner===f.a?f.b:f.a;
+      placed.push([o+1,f.winner],[o+2,lose]);
+      if(b.third && b.third.winner){ placed.push([o+3,b.third.winner],[o+4,b.third.winner===b.third.a?b.third.b:b.third.a]); }
+    }
+  });
+  placed.sort((a,b)=>a[0]-b[0]); placed.forEach(([,id])=>seen.add(id));
+  let next = placed.length ? Math.max(...placed.map(p=>p[0]))+1 : 1;
+  standings(st).forEach(p=>{ if(!seen.has(p.id)) placed.push([next++, p.id]); });
+  return placed;
 }
 
 /* Tous les matchs d'un joueur, du plus ancien au plus récent */
 function matchesOf(st,id){
   const out=[];
   st.rounds.forEach(r=>r.matches.forEach(x=>{ if(x.a===id||x.b===id) out.push({...x, label:roundLabel(r)}); }));
-  if(st.bracket){
-    st.bracket.rounds.forEach(r=>{
-      const lbl = koLabel(r.length);
-      r.forEach(x=>{ if(x.a===id||x.b===id) out.push({...x,label:lbl, ko:true}); });
-    });
-    const t = st.bracket.third; if(t && (t.a===id||t.b===id)) out.push({...t,label:"Petite finale",ko:true});
-  }
+  brackets(st).forEach(b=>{
+    b.rounds.forEach(r=>{ const lbl=bLabel(b,r.length,false); r.forEach(x=>{ if(x.a===id||x.b===id) out.push({...x,label:lbl,ko:true}); }); });
+    const t=b.third; if(t && (t.a===id||t.b===id)) out.push({...t,label:bLabel(b,1,true),ko:true});
+  });
   return out;
 }
 function tableText(x){ if(!x.table) return ""; return "Table "+x.table + (x.wave>1?" · "+x.wave+"e passage":""); }
@@ -359,7 +404,7 @@ function render(){
   live.lastElementChild.textContent = S.mode==="live" ? "En direct" : S.mode==="local" ? "Mode local" : S.mode==="loading" ? "Connexion…" : "Hors ligne";
   if(st){
     const lastR = st.rounds[st.rounds.length-1];
-    const ph = st.phase==="swiss" ? (lastR&&lastR.catchup ? "Ronde de rattrapage" : "Ronde "+qualifRounds(st)+" / "+st.settings.swissRounds) : st.phase==="finals" ? koLabel(st.bracket.rounds[st.bracket.rounds.length-1].length) : st.phase==="done" ? "Tournoi terminé" : "";
+    const ph = st.phase==="swiss" ? (lastR&&lastR.catchup ? "Ronde de rattrapage" : "Ronde "+qualifRounds(st)+" / "+st.settings.swissRounds) : st.phase==="finals" ? (st.bracket.done ? "Matchs de classement" : koLabel(st.bracket.rounds[st.bracket.rounds.length-1].length)) : st.phase==="done" ? "Tournoi terminé" : "";
     $("subtitle").textContent = st.players.length + " participants · " + ph;
   } else $("subtitle").textContent = S.mode==="loading" ? "Chargement…" : "Pas encore lancé";
 
@@ -398,9 +443,8 @@ function viewMatch(){
   let current = null;
   if(st.phase==="swiss"){ const r = st.rounds[st.rounds.length-1]; current = r && r.matches.find(x=>x.a===S.me||x.b===S.me); if(current) current={...current,label:roundLabel(r)}; }
   else if(st.phase==="finals"){
-    const b=st.bracket, r=b.rounds[b.rounds.length-1];
-    const x = r.find(x=>x.a===S.me||x.b===S.me) || (b.third && (b.third.a===S.me||b.third.b===S.me) ? b.third : null);
-    if(x) current = {...x, label: x===b.third ? "Petite finale" : koLabel(r.length)};
+    const c = currentKo(st).find(c=>c.x.a===S.me||c.x.b===S.me);
+    if(c) current = {...c.x, label:c.label};
   }
   let hero="";
   if(st.phase==="done"){
@@ -416,7 +460,7 @@ function viewMatch(){
       ${current.wave>1?`<div class="small" style="margin-top:6px">${current.wave}e passage sur cette table : attends que le match précédent se termine.</div>`:""}
       <div class="status">${status}</div></div>`;
   } else if(st.phase==="finals"){
-    hero = `<div class="card"><h2>Pas de match pour toi</h2><p class="muted">Tu n'es plus dans la phase finale. Suis le tableau dans l'onglet Phase finale.</p></div>`;
+    hero = `<div class="card"><h2>Pas de match pour toi</h2><p class="muted">Pas de match en cours pour toi : attends le tour suivant ou suis les tableaux dans l'onglet Finale.</p></div>`;
   }
   const sd = standings(st); const i = sd.findIndex(p=>p.id===S.me); const me = sd[i];
   const stats = me ? `<div class="card"><h2>Mon bilan</h2><div class="fields">
@@ -432,7 +476,7 @@ function viewMatch(){
     `<div class="small muted" style="text-align:center">Tu es <b>${esc(name(S.me))}</b> · <button class="btn" style="padding:4px 10px;font-size:14px" data-act="changeme">Changer</button></div>`;
 }
 function viewRules(){
-  const st=S.state, s=st?st.settings:{swissRounds:4,finalSize:4,ptsWin:3,ptsLoss:0,smallFinal:true};
+  const st=S.state, s=st?st.settings:{swissRounds:3,finalSize:4,ptsWin:3,ptsLoss:0,smallFinal:true,consolante:true};
   const nTeams = st?st.players.length:null;
   const odd = nTeams ? nTeams%2===1 : true;
   return `<div class="card rules"><h2>Le tournoi</h2>
@@ -454,6 +498,7 @@ function viewRules(){
     <ul>
       <li>Les <b>${s.finalSize} premières équipes</b> du classement passent en élimination directe : 1<sup>re</sup> contre ${s.finalSize}<sup>e</sup>, 2<sup>e</sup> contre ${s.finalSize-1}<sup>e</sup>…</li>
       <li>Les gagnants avancent jusqu'à la <b>finale</b>.${s.smallFinal?" Les perdants des demi-finales jouent la <b>petite finale</b> pour la 3<sup>e</sup> place.":""}</li>
+      ${s.consolante!==false?`<li><b>Consolante</b> : en même temps, les équipes classées juste après jouent le même format pour les places suivantes (pour 8 équipes : demi-finales des places 5 à 8, puis match pour la 5<sup>e</sup> place et match pour la 7<sup>e</sup> place). Tout le monde joue jusqu'à la fin et chaque équipe repart avec un classement.</li>`:""}
     </ul>
   </div>
   <div class="card rules"><h2>Le jeu : Tac Tik</h2>
@@ -500,11 +545,11 @@ function viewRules(){
   </div>`;
 }
 function podium(){
-  const b=S.state.bracket; const f=b.rounds[b.rounds.length-1][0];
-  const second = f.winner===f.a?f.b:f.a;
-  const third = b.third && b.third.winner ? b.third.winner : null;
+  const st=S.state, fr=finalRanking(st), at=k=>{ const p=fr.find(p=>p[0]===k); return p?esc(name(p[1])):"–"; };
+  const rows = fr.map(([k,id])=>`<tr class="${id===S.me?"me":""}"><td class="rank">${k}</td><td>${esc(name(id))}</td></tr>`).join("");
   return `<div class="card"><h2>Podium</h2><div class="podium">
-    <div><b>2</b>${esc(name(second))}</div><div class="p1"><b>1</b>${esc(name(f.winner))}</div><div><b>3</b>${third?esc(name(third)):"–"}</div></div></div>`;
+    <div><b>2</b>${at(2)}</div><div class="p1"><b>1</b>${at(1)}</div><div><b>3</b>${at(3)}</div></div></div>
+    <div class="card"><h2>Classement final</h2><table><tbody>${rows}</tbody></table></div>`;
 }
 function viewStandings(){
   const st=S.state, sd=standings(st);
@@ -518,23 +563,24 @@ function slot(x){
   const row=(id,seed)=>{ const cls = x.winner ? (x.winner===id?"w":"l") : ""; return `<div class="${cls} ${id===S.me?"me-s":""}"><span>${seed?'<span class="muted small">'+seed+'</span> ':""}${esc(name(id))}</span><span>${x.winner===id?"✓":""}</span></div>`; };
   return `<div class="slot">${row(x.a,x.seedA)}${row(x.b,x.seedB)}</div>`;
 }
+function bracketCard(b, title){
+  const total=Math.log2(b.size), cols=[];
+  for(let r=0;r<total;r++){
+    const ms=b.rounds[r], count=b.size/Math.pow(2,r+1);
+    const inner = ms ? ms.map(slot).join("") : Array.from({length:count},()=>`<div class="slot"><div class="muted">à venir</div><div class="muted">à venir</div></div>`).join("");
+    cols.push(`<div class="col"><h3>${(b.offset||0) && count===1 ? (b.offset+1)+"e place" : koLabel(count)}</h3>${inner}</div>`);
+  }
+  const third = b.third ? `<div style="margin-top:12px"><div class="small muted" style="margin-bottom:6px"><b>${bLabel(b,1,true)}</b></div>${slot(b.third)}</div>` : "";
+  return `<div class="card"><h2>${title}</h2><div class="scroll"><div class="bracket">${cols.join("")}</div></div>${third}</div>`;
+}
 function viewBracket(){
   const st=S.state;
   if(!st.bracket){
     const n = Math.min(st.settings.finalSize, st.players.length);
-    return `<div class="card"><h2>Phase finale</h2><p class="muted">Le tableau sera créé après la dernière ronde : les ${n} premiers du classement s'affrontent en élimination directe (1er contre ${n}e, etc.) jusqu'à la finale.</p></div>`;
+    const c = st.settings.consolante!==false ? Math.min(n, st.players.length-n) : 0;
+    return `<div class="card"><h2>Phase finale</h2><p class="muted">Les tableaux seront créés après la dernière ronde : les ${n} premiers s'affrontent en élimination directe (1er contre ${n}e…) jusqu'à la finale.${c>=2?` Les équipes classées ${n+1}e à ${n+c}e jouent en même temps la consolante, pour les places ${n+1} à ${n+c} : tout le monde joue jusqu'au bout.`:""}</p></div>`;
   }
-  const b=st.bracket;
-  const total = Math.log2(b.size);
-  const cols=[];
-  for(let r=0;r<total;r++){
-    const ms = b.rounds[r];
-    const count = b.size/Math.pow(2,r+1);
-    const inner = ms ? ms.map(slot).join("") : Array.from({length:count},()=>`<div class="slot"><div class="muted">à venir</div><div class="muted">à venir</div></div>`).join("");
-    cols.push(`<div class="col"><h3>${koLabel(count)}</h3>${inner}</div>`);
-  }
-  const third = b.third ? `<div class="card"><h2>Petite finale</h2>${slot(b.third)}</div>` : "";
-  return (st.phase==="done"?podium():"") + `<div class="card"><h2>Tableau final</h2><div class="scroll"><div class="bracket">${cols.join("")}</div></div></div>` + third;
+  return (st.phase==="done"?podium():"") + bracketCard(st.bracket,"Tableau final") + (st.consol ? bracketCard(st.consol,"Consolante · places "+(st.consol.offset+1)+" à "+(st.consol.offset+st.consol.size)) : "");
 }
 
 function viewAdmin(){
@@ -565,11 +611,12 @@ function viewAdmin(){
         <button class="btn" data-act="redoRound">Refaire les appariements de cette ronde</button>
       </div></div>`;
   } else if(st.phase==="finals"){
-    const b=st.bracket, r=b.rounds[b.rounds.length-1];
-    const all = koAllDone(st);
-    h += `<div class="card"><h2>${koLabel(r.length)}</h2><p class="small muted">Touche le nom du gagnant.</p>
-      <div class="list">${r.map(matchPicker).join("")}${b.third?`<div class="small muted" style="margin-top:6px"><b>Petite finale</b></div>`+matchPicker(b.third):""}</div>
-      <div class="actions" style="margin-top:14px"><button class="btn primary" data-act="nextKo" ${all?"":"disabled"}>${r.length===1?"Terminer le tournoi":"Tour suivant"}</button></div></div>`;
+    const all = koAllDone(st), cur = currentKo(st);
+    const lastWave = brackets(st).every(b=>b.done || b.rounds[b.rounds.length-1].length===1);
+    const groups = []; cur.forEach(c=>{ let g=groups.find(g=>g.label===c.label); if(!g) groups.push(g={label:c.label,ms:[]}); g.ms.push(c.x); });
+    h += `<div class="card"><h2>Phase finale</h2><p class="small muted">Touche le nom du gagnant de chaque match, puis saisis les cases restantes du perdant si tu veux garder la trace.</p>
+      <div class="list">${groups.map(g=>`<div class="small muted" style="margin-top:6px"><b>${esc(g.label)}</b></div>`+g.ms.map(matchPicker).join("")).join("")}</div>
+      <div class="actions" style="margin-top:14px"><button class="btn primary" data-act="nextKo" ${all?"":"disabled"}>${lastWave?"Terminer le tournoi":"Tour suivant"}</button></div></div>`;
   } else {
     h += podium();
   }
@@ -594,7 +641,7 @@ function matchPicker(x){
   return `<div class="match"><div class="head"><span>${esc(tableText(x)||"Match")}</span>${pill}</div><div class="pick">${b(x.a)}${b(x.b)}</div>${gapField}</div>`;
 }
 function viewSetup(){
-  const d = S.draft || (S.draft = { name:"Tournoi entre amis", players:"", rounds:"", finalSize:"4", tables:"", ptsWin:"3", ptsLoss:"0", smallFinal:true });
+  const d = S.draft || (S.draft = { name:"Tournoi entre amis", players:"", rounds:"", finalSize:"4", tables:"", ptsWin:"3", ptsLoss:"0", smallFinal:true, consolante:true });
   const n = d.players.split("\n").map(s=>s.trim()).filter(Boolean).length;
   let sugg = n>1 ? Math.ceil(Math.log2(n)) : 3; if(n%2===1 && sugg%2===1) sugg++;
   return `<div class="card"><h2>Préparer le tournoi</h2>
@@ -612,6 +659,7 @@ function viewSetup(){
       <div><label for="f-l">Pts défaite</label><input id="f-l" data-f="ptsLoss" type="number" value="${esc(d.ptsLoss)}"></div>
     </div>
     <label class="check" for="f-small"><input id="f-small" type="checkbox" data-f="smallFinal" ${d.smallFinal?"checked":""}> Match pour la 3e place (petite finale)</label>
+    <label class="check" for="f-consol"><input id="f-consol" type="checkbox" data-f="consolante" ${d.consolante!==false?"checked":""}> Consolante : les équipes non qualifiées jouent pour les places suivantes</label>
     <p class="small muted">Déroulé : des rondes « à la suisse » où chacun affronte un adversaire au score proche, sans jamais rejouer contre le même. Puis les meilleurs passent en élimination directe jusqu'à la finale.</p>
     ${S.setupErr?`<div class="err">${esc(S.setupErr)}</div>`:""}
     <button class="btn primary" type="submit">Lancer la ronde 1</button>
@@ -631,7 +679,7 @@ document.addEventListener("click", (e)=>{
     const mid=t.dataset.m, pid=t.dataset.p;
     mutate(st=>{
       const pools = [...st.rounds.flatMap(r=>r.matches)];
-      if(st.bracket){ st.bracket.rounds.forEach(r=>pools.push(...r)); if(st.bracket.third) pools.push(st.bracket.third); }
+      pools.push(...allKoMatches(st));
       const x = pools.find(x=>x.id===mid); if(!x) return;
       const nw = x.winner===pid ? null : pid;
       if(nw!==x.winner) x.gap = null;
@@ -653,7 +701,7 @@ document.addEventListener("change",(e)=>{
   if(e.target.dataset.act==="gap" && S.admin){
     const mid=e.target.dataset.m, raw=e.target.value.trim(); const v = raw==="" ? null : Math.max(0, Math.round(Number(raw)));
     if(raw!=="" && isNaN(v)) return;
-    mutate(st=>{ const pools=[...st.rounds.flatMap(r=>r.matches)]; if(st.bracket){ st.bracket.rounds.forEach(r=>pools.push(...r)); if(st.bracket.third) pools.push(st.bracket.third); }
+    mutate(st=>{ const pools=[...st.rounds.flatMap(r=>r.matches)]; pools.push(...allKoMatches(st));
       const x=pools.find(x=>x.id===mid); if(x) x.gap=v; });
   }
   if(e.target.dataset.act==="who"){ S.me=e.target.value; try{localStorage.setItem(LS_ME,S.me);}catch(_){} render(); }
@@ -676,8 +724,8 @@ document.addEventListener("submit",(e)=>{
     name: d.name.trim() || "Tournoi",
     phase:"swiss",
     players: names.map(n=>({id:uid(),name:n})),
-    settings:{ swissRounds: (()=>{ let r=Math.max(1,num(d.rounds, Math.ceil(Math.log2(names.length)))); if(names.length%2===1 && r%2===1) r++; return r; })(), finalSize: num(d.finalSize,4), tables: Math.max(0,num(d.tables,0)), ptsWin:num(d.ptsWin,3), ptsLoss:num(d.ptsLoss,0), ptsBye:0, smallFinal: !!d.smallFinal },
-    rounds:[], bracket:null
+    settings:{ swissRounds: (()=>{ let r=Math.max(1,num(d.rounds, Math.ceil(Math.log2(names.length)))); if(names.length%2===1 && r%2===1) r++; return r; })(), finalSize: num(d.finalSize,4), tables: Math.max(0,num(d.tables,0)), ptsWin:num(d.ptsWin,3), ptsLoss:num(d.ptsLoss,0), ptsBye:0, smallFinal: !!d.smallFinal, consolante: d.consolante!==false },
+    rounds:[], bracket:null, consol:null
   };
   st.rounds.push(pairSwiss(st));
   S.state=st; S.tab="admin"; save();
