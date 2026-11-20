@@ -277,6 +277,7 @@ function makeBracket(ids, offset){
 function brackets(st){ return [st.bracket, st.consol, ...(st.place||[])].filter(Boolean); }
 function isPlacement(st){ return st.settings.format==="placement" || st.settings.format==="pools"; }
 function isPools(st){ return st.settings.format==="pools"; }
+function isNoFinal(st){ return st.settings.format==="none"; }
 /* poules : chaque équipe affronte toutes les autres de sa poule (méthode du cercle) */
 function roundRobin(ids){
   const a=ids.slice(); if(a.length%2) a.push(null);
@@ -542,7 +543,8 @@ function viewRules(){
       <li><b>Points de défaite</b> : quand une équipe rentre ses 8 pions, on compte le nombre de cases qu'il reste à parcourir à <b>tous les pions de l'équipe perdante</b> jusqu'au fond de leur maison. Un pion encore dans la réserve compte pour un <b>tour complet du plateau plus les cases de la maison</b>. Ce total devient les points de défaite de l'équipe perdante. L'équipe gagnante n'en prend aucun.</li>
       <li>À égalité de points, l'équipe qui a <b>le moins de points de défaite</b> cumulés passe devant (colonne « Pén. »). Si l'égalité persiste, on regarde la somme des points des adversaires rencontrés (colonne « Dép. »).</li>
     </ul>
-    ${s.format==="pools" ? `<h3>Poules puis matchs de classement</h3>
+    ${s.format==="none" ? `<h3>Classement final</h3>
+    <ul><li>Pas de phase finale : le classement après la dernière ronde (aux points, puis aux points de défaite) donne les places de 1 à ${nTeams||"N"}.</li></ul>` : s.format==="pools" ? `<h3>Poules puis matchs de classement</h3>
     <ul>
       <li>Les équipes sont réparties en <b>2 poules</b>. Dans chaque poule, chaque équipe affronte <b>toutes les autres</b> une fois.</li>
       <li>Ensuite, chaque équipe joue contre l'équipe de l'autre poule qui a le même rang : <b>1<sup>er</sup> A contre 1<sup>er</sup> B</b> (finale), 2<sup>e</sup> contre 2<sup>e</sup> (3<sup>e</sup> place), 3<sup>e</sup> contre 3<sup>e</sup> (5<sup>e</sup> place), 4<sup>e</sup> contre 4<sup>e</sup> (7<sup>e</sup> place).</li>
@@ -618,10 +620,10 @@ function viewStandings(){
     `<p class="small muted">Victoire ${st.settings.ptsWin} pts · défaite ${st.settings.ptsLoss} pt. Dans chaque poule, chaque équipe affronte toutes les autres. À égalité de points, celle qui a le moins de points de défaite (Pén. : les cases qu'il te restait quand tu as perdu) passe devant. Ensuite : 1er A contre 1er B (finale), 2e contre 2e, 3e contre 3e, 4e contre 4e.</p>`;
   const sd=standings(st);
   const cut = Math.min(st.settings.finalSize, sd.length);
-  const rows = sd.map((p,i)=>`<tr class="${p.id===S.me?"me":""} ${i===cut-1&&st.phase==="swiss"&&!isPlacement(st)?"cut":""}"><td class="rank">${i+1}</td><td>${esc(p.name)}${p.byes?' <span class="pill">exempt</span>':""}</td><td class="num"><b>${p.pts}</b></td><td class="num">${p.w}–${p.l}</td><td class="num">${p.pen}</td><td class="num">${p.bu}</td></tr>`).join("");
+  const rows = sd.map((p,i)=>`<tr class="${p.id===S.me?"me":""} ${i===cut-1&&st.phase==="swiss"&&!isPlacement(st)&&!isNoFinal(st)?"cut":""}"><td class="rank">${i+1}</td><td>${esc(p.name)}${p.byes?' <span class="pill">exempt</span>':""}</td><td class="num"><b>${p.pts}</b></td><td class="num">${p.w}–${p.l}</td><td class="num">${p.pen}</td><td class="num">${p.bu}</td></tr>`).join("");
   return `<div class="card"><h2>Classement des rondes</h2>
     <div class="scroll"><table><thead><tr><th>#</th><th>Joueur</th><th class="num">Pts</th><th class="num">V–D</th><th class="num" title="Points de défaite : cases qu'il te restait quand tu as perdu">Pén.</th><th class="num" title="Somme des points de tes adversaires">Dép.</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <p class="small muted">Victoire ${st.settings.ptsWin} pts · défaite ${st.settings.ptsLoss} pt. Tout le monde joue le même nombre de matchs : l'exempt ne rapporte rien et se rattrape dans une ronde dédiée. À égalité de points, celui qui a le moins de points de défaite passe devant (Pén. : les cases qu'il te restait quand tu as perdu), puis on départage par la somme des points des adversaires (Dép.).${st.phase==="swiss"?(isPlacement(st)?" Après les rondes, ronde de classement : 1er contre 2e (finale), 3e contre 4e, 5e contre 6e…":" Les "+cut+" premiers (au-dessus des pointillés) vont en phase finale."):""}</p></div>`;
+    <p class="small muted">Victoire ${st.settings.ptsWin} pts · défaite ${st.settings.ptsLoss} pt. Tout le monde joue le même nombre de matchs : l'exempt ne rapporte rien et se rattrape dans une ronde dédiée. À égalité de points, celui qui a le moins de points de défaite passe devant (Pén. : les cases qu'il te restait quand tu as perdu), puis on départage par la somme des points des adversaires (Dép.).${st.phase==="swiss"?(isNoFinal(st)?" Pas de phase finale : ce classement deviendra le classement final.":isPlacement(st)?" Après les rondes, ronde de classement : 1er contre 2e (finale), 3e contre 4e, 5e contre 6e…":" Les "+cut+" premiers (au-dessus des pointillés) vont en phase finale."):""}</p></div>`;
 }
 function slot(x){
   const row=(id,seed)=>{ const cls = x.winner ? (x.winner===id?"w":"l") : ""; return `<div class="${cls} ${id===S.me?"me-s":""}"><span>${seed?'<span class="muted small">'+seed+'</span> ':""}${esc(name(id))}</span><span>${x.winner===id?"✓":""}</span></div>`; };
@@ -639,6 +641,7 @@ function bracketCard(b, title){
 }
 function viewBracket(){
   const st=S.state;
+  if(isNoFinal(st)) return st.phase==="done" ? podium() : `<div class="card"><h2>Pas de phase finale</h2><p class="muted">Le classement après la dernière ronde (et le rattrapage) est le classement final. Suis-le dans l'onglet Classement.</p></div>`;
   if(isPlacement(st)){
     if(!st.bracket && isPools(st)) return `<div class="card"><h2>Matchs de classement</h2><p class="muted">Après les poules, chaque équipe joue contre l'équipe de l'autre poule qui a le même rang : 1<sup>er</sup> A contre 1<sup>er</sup> B pour le titre, 2<sup>e</sup> contre 2<sup>e</sup> pour la 3<sup>e</sup> place, 3<sup>e</sup> contre 3<sup>e</sup> pour la 5<sup>e</sup>, 4<sup>e</sup> contre 4<sup>e</sup> pour la 7<sup>e</sup>.</p></div>`;
     if(!st.bracket) return `<div class="card"><h2>Ronde de classement</h2><p class="muted">Après la dernière ronde, chaque équipe joue un dernier match contre sa voisine au classement : 1<sup>er</sup> contre 2<sup>e</sup> pour le titre, 3<sup>e</sup> contre 4<sup>e</sup>, 5<sup>e</sup> contre 6<sup>e</sup>… Le gagnant prend la meilleure des deux places.</p></div>`;
@@ -676,7 +679,7 @@ function viewAdmin(){
       <div class="actions" style="margin-top:14px">
         ${!last?`<button class="btn primary" data-act="nextSwiss" ${all?"":"disabled"}>${isPools(st)?"Lancer la journée "+(nq+1):"Lancer la ronde "+(nq+1)}</button>`:""}
         ${needCatch?`<button class="btn primary" data-act="catchup">Lancer la ronde de rattrapage (${short.length} équipes)</button>`:""}
-        ${last?`<button class="btn ${needCatch?"":"primary"}" data-act="startFinals" ${all&&!needCatch?"":"disabled"}>${isPools(st) ? "Lancer les matchs de classement" : isPlacement(st) ? "Lancer la ronde de classement" : "Lancer la phase finale (top "+Math.min(st.settings.finalSize, st.players.length)+")"}</button>`:""}
+        ${last?`<button class="btn ${needCatch?"":"primary"}" data-act="startFinals" ${all&&!needCatch?"":"disabled"}>${isNoFinal(st) ? "Terminer le tournoi" : isPools(st) ? "Lancer les matchs de classement" : isPlacement(st) ? "Lancer la ronde de classement" : "Lancer la phase finale (top "+Math.min(st.settings.finalSize, st.players.length)+")"}</button>`:""}
         ${last&&!oddTeams&&!hasCatch&&!isPools(st)?`<button class="btn" data-act="nextSwiss" ${all?"":"disabled"}>Ajouter une ronde</button>`:""}
         ${isPools(st)?"":`<button class="btn" data-act="redoRound">Refaire les appariements de cette ronde</button>`}
       </div></div>`;
@@ -724,8 +727,11 @@ function viewSetup(){
         <option value="finals" ${d.format!=="placement"?"selected":""}>Phase finale : demi-finales, finale + consolante</option>
         <option value="placement" ${d.format==="placement"?"selected":""}>Ronde de classement : 1er contre 2e, 3e contre 4e…</option>
         <option value="pools" ${d.format==="pools"?"selected":""}>2 poules (tous contre tous) + matchs de classement</option>
+        <option value="none" ${d.format==="none"?"selected":""}>Rien : le classement des rondes est le classement final</option>
       </select>
-      <div class="small muted">${d.format==="pools"
+      <div class="small muted">${d.format==="none"
+        ? "Pas de phase finale : le classement après les rondes (et le rattrapage s'il y a un exempt) donne les places de 1 à "+(n||"N")+". Avec 7 équipes et 4 rondes : 4 parties par équipe."
+        : d.format==="pools"
         ? "Le plus équitable : dans chaque poule, chaque équipe affronte toutes les autres, puis 1er A contre 1er B (finale), 2e contre 2e… Avec 8 équipes : 2 poules de 4, 4 parties par équipe."+(n%2?" Attention : avec un nombre impair d'équipes, les poules sont inégales.":"")
         : d.format==="placement"
         ? "Une seule partie de plus pour tout le monde : 1er contre 2e pour le titre, 3e contre 4e, etc. Avec 8 équipes et 2 rondes de qualif : 3 parties par équipe."+(n%2?" Attention : avec un nombre impair d'équipes, la dernière ne joue pas la ronde de classement (une partie de moins).":"")
@@ -736,16 +742,16 @@ function viewSetup(){
       <div class="small muted">${d.split==="snake"?"Mets les équipes dans l'ordre de niveau, de la plus forte à la plus faible : 1re et 4e en poule A, 2e et 3e en poule B, et ainsi de suite.":"Les poules sont tirées au hasard au lancement."}</div></div>`:""}
     <div class="fields">
       ${d.format==="pools"?"":`<div><label for="f-rounds">Rondes de qualif</label><input id="f-rounds" data-f="rounds" type="number" min="1" max="15" placeholder="${sugg} conseillé" value="${esc(d.rounds)}"></div>`}
-      ${d.format==="placement"||d.format==="pools"?"":`<div><label for="f-final">Phase finale</label><select id="f-final" data-f="finalSize">${[2,4,8,16].map(v=>`<option value="${v}" ${String(v)===d.finalSize?"selected":""}>Top ${v}</option>`).join("")}</select></div>`}
+      ${["placement","pools","none"].includes(d.format)?"":`<div><label for="f-final">Phase finale</label><select id="f-final" data-f="finalSize">${[2,4,8,16].map(v=>`<option value="${v}" ${String(v)===d.finalSize?"selected":""}>Top ${v}</option>`).join("")}</select></div>`}
       <div><label for="f-tables">Tables dispo</label><input id="f-tables" data-f="tables" type="number" min="1" placeholder="illimité" value="${esc(d.tables)}"></div>
     </div>
     <div class="fields">
       <div><label for="f-w">Pts victoire</label><input id="f-w" data-f="ptsWin" type="number" value="${esc(d.ptsWin)}"></div>
       <div><label for="f-l">Pts défaite</label><input id="f-l" data-f="ptsLoss" type="number" value="${esc(d.ptsLoss)}"></div>
     </div>
-    ${d.format==="placement"||d.format==="pools"?"":`<label class="check" for="f-small"><input id="f-small" type="checkbox" data-f="smallFinal" ${d.smallFinal?"checked":""}> Match pour la 3e place (petite finale)</label>
+    ${["placement","pools","none"].includes(d.format)?"":`<label class="check" for="f-small"><input id="f-small" type="checkbox" data-f="smallFinal" ${d.smallFinal?"checked":""}> Match pour la 3e place (petite finale)</label>
     <label class="check" for="f-consol"><input id="f-consol" type="checkbox" data-f="consolante" ${d.consolante!==false?"checked":""}> Consolante : les équipes non qualifiées jouent pour les places suivantes</label>`}
-    <p class="small muted">Déroulé : des rondes « à la suisse » où chacun affronte un adversaire au score proche, sans jamais rejouer contre le même. ${d.format==="pools"?"Variante poules : chaque équipe affronte toutes celles de sa poule, puis matchs de classement entre poules.":d.format==="placement"?"Puis une ronde de classement : 1er contre 2e pour le titre, 3e contre 4e, etc.":"Puis les meilleurs passent en élimination directe jusqu'à la finale."}</p>
+    <p class="small muted">Déroulé : des rondes « à la suisse » où chacun affronte un adversaire au score proche, sans jamais rejouer contre le même. ${d.format==="none"?"Le classement final est celui des rondes.":d.format==="pools"?"Variante poules : chaque équipe affronte toutes celles de sa poule, puis matchs de classement entre poules.":d.format==="placement"?"Puis une ronde de classement : 1er contre 2e pour le titre, 3e contre 4e, etc.":"Puis les meilleurs passent en élimination directe jusqu'à la finale."}</p>
     ${S.setupErr?`<div class="err">${esc(S.setupErr)}</div>`:""}
     <button class="btn primary" type="submit">Lancer la ronde 1</button>
    </form></div>`;
@@ -775,7 +781,7 @@ document.addEventListener("click", (e)=>{
   if(a==="nextSwiss") mutateStep("nextSwiss", st=>{ if(isPools(st)){ const nx=st.schedule[st.rounds.length]; if(nx) st.rounds.push(JSON.parse(JSON.stringify(nx))); return; } st.rounds.push(pairSwiss(st)); const q=qualifRounds(st); if(q>st.settings.swissRounds) st.settings.swissRounds=q; });
   if(a==="catchup") mutateStep("catchup", st=>{ st.rounds.push(pairCatchup(st)); });
   if(a==="redoRound") mutateStep("redoRound", st=>{ const c=st.rounds.pop(); st.rounds.push(c.catchup?pairCatchup(st):pairSwiss(st)); });
-  if(a==="startFinals") mutateStep("startFinals", st=> isPools(st) ? startPoolPlacement(st) : isPlacement(st) ? startPlacement(st) : startFinals(st));
+  if(a==="startFinals") mutateStep("startFinals", st=> isNoFinal(st) ? (st.phase="done") : isPools(st) ? startPoolPlacement(st) : isPlacement(st) ? startPlacement(st) : startFinals(st));
   if(a==="nextKo") mutateStep("nextKo", st=>nextKo(st));
   if(a==="reset"){ if(!S.confirmReset){ S.confirmReset=true; render(); } else { S.confirmReset=false; S.state=null; S.draft=null; save(); } }
   if(a==="cancelReset"){ S.confirmReset=false; render(); }
@@ -809,7 +815,7 @@ document.addEventListener("submit",(e)=>{
     name: d.name.trim() || "Tournoi",
     phase:"swiss",
     players: names.map(n=>({id:uid(),name:n})),
-    settings:{ swissRounds: (()=>{ let r=Math.max(1,num(d.rounds, Math.max(1, Math.ceil(Math.log2(names.length)) - (d.format==="placement"?1:0)))); if(names.length%2===1 && r%2===1) r++; return r; })(), finalSize: num(d.finalSize,4), tables: Math.max(0,num(d.tables,0)), ptsWin:num(d.ptsWin,3), ptsLoss:num(d.ptsLoss,0), ptsBye:0, smallFinal: !!d.smallFinal, consolante: d.consolante!==false, format: ["placement","pools"].includes(d.format)?d.format:"finals" },
+    settings:{ swissRounds: (()=>{ let r=Math.max(1,num(d.rounds, Math.max(1, Math.ceil(Math.log2(names.length)) - (d.format==="placement"?1:0)))); if(names.length%2===1 && r%2===1) r++; return r; })(), finalSize: num(d.finalSize,4), tables: Math.max(0,num(d.tables,0)), ptsWin:num(d.ptsWin,3), ptsLoss:num(d.ptsLoss,0), ptsBye:0, smallFinal: !!d.smallFinal, consolante: d.consolante!==false, format: ["placement","pools","none"].includes(d.format)?d.format:"finals" },
     rounds:[], bracket:null, consol:null, place:[]
   };
   if(st.settings.format==="pools"){ buildPools(st, st.players.map(p=>p.id), d.split==="snake"?"snake":"random"); st.rounds.push(JSON.parse(JSON.stringify(st.schedule[0]))); }
